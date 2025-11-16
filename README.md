@@ -1,2 +1,1 @@
-# indicator-suite
-# indicator-suite
+# TradingView indicator suite
