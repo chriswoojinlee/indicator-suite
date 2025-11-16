@@ -1,0 +1,327 @@
+//@version=6
+indicator(title="Fisher Transform", shorttitle="Fisher Transform")
+
+//This is an experimental study designed to visualize price activity using John Ehlers Fisher Transform and Inverse Fisher Transform methods.
+//The Ehlers Fisher Transform is a variation of R. A. Fisher's Z transformation and is a conversion of price's probability distribution to a Gaussian normal distribution with a smoother output.
+// The study uses a modified set of Bollinger Bands applied to the chosen oscillator to determine trend and impulse activity, which are highlighted by the color scheme.
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Functions
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//Fisher Transform
+fish(x, t) =>
+    highval = ta.highest(x, t)
+    lowval  = ta.lowest(x, t)
+    val1    = 0.0
+    val1   := 0.66 * ((x - lowval) / math.max(highval - lowval, 0.001) - 0.5) + 0.67*nz(val1[1], 0)
+    val2    = val1 > 0.99 ? 0.999 : val1 < -0.99 ? -0.999 : val1
+    fish    = 0.0
+    fish   := 0.5 * math.log((1 + val2) / math.max(1 - val2, 0.001)) + 0.5*nz(fish[1], 0)
+    fish
+
+//EMA Function
+EMA(x, t)=>
+    EMA = x
+    EMA := na(EMA[1]) ? x : (x - nz(EMA[1]))*(2/(t + 1)) + nz(EMA[1])
+    EMA
+
+//Cumulative Average Function
+cmean(x)=>
+    var xsum  = 0.0
+    xsum     := xsum + x
+    var tsum  = 0.0
+    tsum     := tsum + 1
+    cmean     = xsum/tsum
+    cmean
+
+//Compression Function
+comp(x, k_type, h_knee, l_knee, intensity)=>
+    hk   = k_type=="Auto" ? cmean(math.abs(x)) : h_knee
+    lk   = k_type=="Auto" ? -cmean(math.abs(x)) : l_knee
+    comp = x > hk ? x - intensity*(x - hk)/100 :
+           x < lk ? x + intensity*(lk - x)/100 : x
+    comp
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Hardcoded Backend Settings (Hidden from user)
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//Source - HLC/3 for all timeframes
+src = (high + low + close) / 3
+
+//Smoothing - Always on with period 2
+smooth = true
+smper = 2
+
+//Timeframe detection
+is_weekly_plus = timeframe.isweekly or timeframe.ismonthly
+is_daily = timeframe.isdaily
+is_hourly = not timeframe.isdaily and not timeframe.isweekly and not timeframe.ismonthly and (timeframe.in_seconds(timeframe.period) >= 3600)
+is_minute = not timeframe.isdaily and not timeframe.isweekly and not timeframe.ismonthly and not is_hourly
+
+//Timeframe-specific settings
+per = is_weekly_plus ? 13 : is_daily ? 21 : is_hourly ? 13 : 8
+custom_ht = (is_weekly_plus or is_daily) ? 1.0 : is_hourly ? 1.5 : 2.0
+custom_lt = (is_weekly_plus or is_daily) ? -1.0 : is_hourly ? -1.5 : -2.0
+zone_upper_boundary = (is_weekly_plus or is_daily) ? 4.0 : is_hourly ? 4.5 : 5.0
+zone_lower_boundary = (is_weekly_plus or is_daily) ? -4.0 : is_hourly ? -4.5 : -5.0
+zone_upper_threshold = (is_weekly_plus or is_daily) ? 1.5 : is_hourly ? 2.0 : 2.5
+zone_lower_threshold = (is_weekly_plus or is_daily) ? -1.5 : is_hourly ? -2.0 : -2.5
+
+//Divergence settings - Timeframe specific
+lbR = (is_weekly_plus or is_daily) ? 5 : is_hourly ? 3 : 2
+lbL = (is_weekly_plus or is_daily) ? 5 : is_hourly ? 3 : 2
+rangeUpper = (is_weekly_plus or is_daily) ? 100 : is_hourly ? 50 : 30
+rangeLower = (is_weekly_plus or is_daily) ? 10 : is_hourly ? 5 : 3
+
+//Feature toggles - All enabled
+show_zones = true
+zone_transparency = 50
+show_transition_circles = true
+use_comp = true
+comp_intensity = 25
+show_signals = true
+
+//Colors - Hardcoded to default red/green
+zone_overbought_color = color.red
+zone_oversold_color = color.green
+color_bullpower = color.green
+color_bullforming = color.green
+color_bullpullback = color.red
+color_bearpower = color.red
+color_bearforming = color.red
+color_bearpullback = color.green
+bull_to_bear_circle_color = color.red
+bear_to_bull_circle_color = color.green
+buy_signal_color = color.green
+sell_signal_color = color.red
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//User Inputs (Visible in Settings)
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//Divergence Display Inputs
+plotBull = input.bool(title="Plot Bullish Divergence", defval=true)
+plotBear = input.bool(title="Plot Bearish Divergence", defval=true)
+showLines = input.bool(title="Show Divergence Lines", defval=true)
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Definitions
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//Fisher Transform
+fisher = nz(fish(src, per), 0)
+
+//Oscillator Type with smoothing
+osc1 = fisher
+osc2 = EMA(osc1, smooth ? smper : 1)
+osc  = use_comp ? comp(osc2, "Custom", custom_ht, custom_lt, comp_intensity) : osc2
+
+//Thresholds
+hth = custom_ht
+lth = custom_lt
+
+//Enhanced 6-Stage Signal System
+bullpower    = (osc > 0) and (osc >= osc[1]) and (osc >= hth)
+bullforming  = (osc > 0) and (osc > osc[1]) and (osc < hth)
+bullpullback = (osc > 0) and (osc < osc[1])
+bearpower    = (osc < 0) and (osc <= osc[1]) and (osc <= lth)
+bearforming  = (osc < 0) and (osc < osc[1]) and (osc > lth)
+bearpullback = (osc < 0) and (osc > osc[1])
+
+//Enhanced Color Scheme (6 distinct colors with user customization)
+osccolor = bullpower ? color_bullpower :     // Strong bullish momentum (customizable)
+           bullforming ? color_bullforming :  // Building bullish momentum (customizable)
+           bullpullback ? color_bullpullback : // Bullish pullback (customizable)
+           bearpower ? color_bearpower :      // Strong bearish momentum (customizable)
+           bearforming ? color_bearforming : // Building bearish momentum (customizable)
+           bearpullback ? color_bearpullback :  // Bearish pullback (customizable)
+           color.gray                      // Neutral/undefined state
+
+basiscolor = osc > 0 ? #00FA9A : osc < 0 ? #C71585 : #cccccc
+
+// Track each individual state
+prev_bullpower = bullpower[1]
+prev_bullforming = bullforming[1]
+prev_bullpullback = bullpullback[1]
+prev_bearpower = bearpower[1] 
+prev_bearforming = bearforming[1]
+prev_bearpullback = bearpullback[1]
+
+// Detect when ANY state changes (this catches all color transitions)
+any_state_change = (bullpower != prev_bullpower) or 
+                   (bullforming != prev_bullforming) or 
+                   (bullpullback != prev_bullpullback) or 
+                   (bearpower != prev_bearpower) or 
+                   (bearforming != prev_bearforming) or 
+                   (bearpullback != prev_bearpullback)
+
+// Check what the current oscillator color is (green vs red)
+current_osc_is_green = (osccolor == color_bullpower) or (osccolor == color_bullforming) or (osccolor == color_bearpullback)
+current_osc_is_red = (osccolor == color_bearpower) or (osccolor == color_bearforming) or (osccolor == color_bullpullback)
+
+// Circle color should match exactly with current oscillator color
+bull_to_bear_transition = any_state_change and current_osc_is_red    // Currently red oscillator = RED circle
+bear_to_bull_transition = any_state_change and current_osc_is_green  // Currently green oscillator = GREEN circle
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Signal Detection
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//Buy Signal: When oscillator is in oversold zone and starts reversing upward
+buy_signal = (osc <= lth) and (osc > osc[1]) and (osc[1] <= osc[2])
+
+//Sell Signal: When oscillator is in overbought zone and starts reversing downward
+sell_signal = (osc >= hth) and (osc < osc[1]) and (osc[1] >= osc[2])
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Divergence Detection
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+bearColor = color.red
+bullColor = color.green
+textColor = color.white
+
+plFound = na(ta.pivotlow(osc, lbL, lbR)) ? false : true
+phFound = na(ta.pivothigh(osc, lbL, lbR)) ? false : true
+
+_inRange(cond) =>
+	bars = ta.barssince(cond == true)
+	rangeLower <= bars and bars <= rangeUpper
+
+//------------------------------------------------------------------------------
+// Line Drawing Function
+drawDivergenceLine(condition, x1, y1, x2, y2, lineColor, priceX1, priceY1, priceX2, priceY2) =>
+    if condition and showLines
+        // Draw line on Fisher pane
+        line.new(x1, y1, x2, y2, color=lineColor, width=1, style=line.style_solid)
+        // Draw line on price chart with force_overlay
+        line.new(priceX1, priceY1, priceX2, priceY2, color=lineColor, width=1, style=line.style_solid, force_overlay=true)
+
+//------------------------------------------------------------------------------
+// Regular Bullish
+// Fisher: Higher Low
+inRangePl = _inRange(plFound[1])
+oscHL = osc[lbR] > ta.valuewhen(plFound, osc[lbR], 1) and inRangePl
+
+// Price: Lower Low
+priceLL = low[lbR] < ta.valuewhen(plFound, low[lbR], 1)
+bullCondAlert = priceLL and oscHL and plFound
+bullCond = plotBull and bullCondAlert
+
+// Get previous pivot data for line drawing
+prevPivotBar = ta.valuewhen(plFound, bar_index[lbR], 1)
+prevPivotFisher = ta.valuewhen(plFound, osc[lbR], 1)
+prevPivotPrice = ta.valuewhen(plFound, low[lbR], 1)
+
+// Draw divergence lines for Regular Bullish
+if bullCond
+    drawDivergenceLine(true, prevPivotBar, prevPivotFisher, bar_index[lbR], osc[lbR], bullColor, 
+                      prevPivotBar, prevPivotPrice, bar_index[lbR], low[lbR])
+
+//------------------------------------------------------------------------------
+// Regular Bearish
+// Fisher: Lower High
+inRangePh = _inRange(phFound[1])
+oscLH = osc[lbR] < ta.valuewhen(phFound, osc[lbR], 1) and inRangePh
+
+// Price: Higher High
+priceHH = high[lbR] > ta.valuewhen(phFound, high[lbR], 1)
+
+bearCondAlert = priceHH and oscLH and phFound
+bearCond = plotBear and bearCondAlert
+
+// Get previous pivot data for bearish divergence line drawing
+prevPivotBarHigh = ta.valuewhen(phFound, bar_index[lbR], 1)
+prevPivotFisherHigh = ta.valuewhen(phFound, osc[lbR], 1)
+prevPivotPriceHigh = ta.valuewhen(phFound, high[lbR], 1)
+
+// Draw divergence lines for Regular Bearish
+if bearCond
+    drawDivergenceLine(true, prevPivotBarHigh, prevPivotFisherHigh, bar_index[lbR], osc[lbR], bearColor,
+                      prevPivotBarHigh, prevPivotPriceHigh, bar_index[lbR], high[lbR])
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Outputs
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//Fisher Threshold Zones - now with adjustable boundaries (hidden from Style tab)
+upper_zone_top = plot(show_zones ? zone_upper_boundary : na, display=display.none)
+upper_zone_bottom = plot(show_zones ? zone_upper_threshold : na, display=display.none)
+lower_zone_top = plot(show_zones ? zone_lower_threshold : na, display=display.none)
+lower_zone_bottom = plot(show_zones ? zone_lower_boundary : na, display=display.none)
+
+//Fill the zones with user-selected colors
+fill(upper_zone_top, upper_zone_bottom, color.new(zone_overbought_color, zone_transparency), title="Overbought Zone")
+fill(lower_zone_top, lower_zone_bottom, color.new(zone_oversold_color, zone_transparency), title="Oversold Zone")
+
+//Center Line
+plot(bar_index <= bar_index ? 0 : na, color=#787B86, linewidth=1, title="Center Line")
+
+//Oscillator Plot with Enhanced 6-Color System
+oscplot = plot(osc, color=osccolor, linewidth=1, title="Oscillator")
+
+// Plot Transition Circles - Small Size Only
+// Bear Transitions (Red circles with black center)
+plotshape(show_transition_circles and bull_to_bear_transition ? osc[1] : na, 
+          style=shape.circle, location=location.absolute, color=bull_to_bear_circle_color, size=size.small, 
+          title="Bear Transition", offset=-1)
+plotshape(show_transition_circles and bull_to_bear_transition ? osc[1] : na, 
+          style=shape.circle, location=location.absolute, color=color.black, size=size.tiny, 
+          title="Bear Inner", offset=-1)
+
+// Bull Transitions (Green circles with black center)
+plotshape(show_transition_circles and bear_to_bull_transition ? osc[1] : na, 
+          style=shape.circle, location=location.absolute, color=bear_to_bull_circle_color, size=size.small, 
+          title="Bull Transition", offset=-1)
+plotshape(show_transition_circles and bear_to_bull_transition ? osc[1] : na, 
+          style=shape.circle, location=location.absolute, color=color.black, size=size.tiny, 
+          title="Bull Inner", offset=-1)
+
+//Buy/Sell Signal Labels
+if show_signals and buy_signal
+    label.new(bar_index, osc, text="B", style=label.style_label_up, color=buy_signal_color, 
+              textcolor=color.white, size=size.normal, tooltip="Buy Signal")
+
+if show_signals and sell_signal
+    label.new(bar_index, osc, text="S", style=label.style_label_down, color=sell_signal_color, 
+              textcolor=color.white, size=size.normal, tooltip="Sell Signal")
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Extreme Zone X Markers
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+// Calculate the extreme zone positions based on current timeframe settings
+// Position X markers beyond the zone boundaries to indicate no-go zones
+extreme_upper_position = zone_upper_boundary + (zone_upper_boundary - zone_upper_threshold) / 2
+extreme_lower_position = zone_lower_boundary - (zone_upper_boundary - zone_upper_threshold) / 2
+
+// Show X markers in extreme zones every bar to indicate overextension no-go zones
+show_extreme_marker = bar_index % 1 == 0
+
+// Red X's in extreme overbought zone (beyond upper boundary)
+plotshape(show_extreme_marker ? extreme_upper_position : na, 
+          style=shape.xcross, location=location.absolute, color=color.red, size=size.tiny, 
+          title="Extreme Overbought")
+
+// Green X's in extreme oversold zone (beyond lower boundary)
+plotshape(show_extreme_marker ? extreme_lower_position : na, 
+          style=shape.xcross, location=location.absolute, color=color.green, size=size.tiny, 
+          title="Extreme Oversold")
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Alerts
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+// Divergence Alerts
+alertcondition(bullCondAlert, title="Bullish Fisher Divergence", message="Found a new Bullish Fisher Divergence")
+alertcondition(bearCondAlert, title="Bearish Fisher Divergence", message="Found a new Bearish Fisher Divergence")
+
+// Buy/Sell Signal Alerts
+alertcondition(buy_signal, title="Fisher Buy Signal", message="Fisher Transform: Buy Signal Detected")
+alertcondition(sell_signal, title="Fisher Sell Signal", message="Fisher Transform: Sell Signal Detected")
+
+// Transition Alerts
+alertcondition(bull_to_bear_transition, title="Bull to Bear Transition", message="Fisher Transform: Bull to Bear Transition")
+alertcondition(bear_to_bull_transition, title="Bear to Bull Transition", message="Fisher Transform: Bear to Bull Transition")

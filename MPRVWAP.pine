@@ -1,0 +1,72 @@
+//@version=5
+indicator("Multi-Period Rolling VWAP", "MPRVWAP", true)
+
+// ———————————————————— Constants and Inputs {
+
+int MS_IN_MIN   = 60 * 1000
+int MS_IN_HOUR  = MS_IN_MIN  * 60
+int MS_IN_DAY   = MS_IN_HOUR * 24
+
+string TT_SRC     = "The source used to calculate the VWAP. The default is the average of high, low, and close prices."
+string TT_TF      = "The timeframe used to calculate all RVWAPs. This ensures consistency across chart timeframes."
+
+// Inputs
+float srcInput    = input.source(hlc3, "Source", tooltip = TT_SRC)
+string tfInput    = input.timeframe("1D", "RVWAP Timeframe", tooltip = TT_TF)
+
+// Fetch data from fixed timeframe
+float fixedSrc = request.security(syminfo.tickerid, tfInput, hlc3, lookahead = barmerge.lookahead_off)
+float fixedVol = request.security(syminfo.tickerid, tfInput, volume, lookahead = barmerge.lookahead_off)
+
+// Time periods
+int time_1w       = 7   * MS_IN_DAY
+int time_1m       = 30  * MS_IN_DAY
+int time_3m       = 90  * MS_IN_DAY
+
+// Toggle for each period
+bool show_1w      = input.bool(true, "Show 1W RVWAP", inline = "1w1")
+color color_1w    = input.color(color.new(color.white, 50), "", inline = "1w1")
+bool show_1m      = input.bool(true, "Show 1M RVWAP", inline = "1m1")
+color color_1m    = input.color(color.new(color.white, 50), "", inline = "1m1")
+bool show_3m      = input.bool(true, "Show 3M RVWAP", inline = "3m1")
+color color_3m    = input.color(color.new(color.white, 50), "", inline = "3m1")
+
+int minBarsInput    = input.int(10, "Minimum Bars", tooltip = "Minimum number of bars to keep in the window.")
+
+// ———————————————————— Calculations {
+
+import PineCoders/ConditionalAverages/1 as pc
+
+// Stop the indicator on charts with no volume
+if barstate.islast and ta.cum(nz(fixedVol)) == 0
+    runtime.error("No volume is provided by the data vendor.")
+
+// Function to calculate RVWAP
+rvwap_calc(int timeInMs) =>
+    float sumSrcVol    = pc.totalForTimeWhen(fixedSrc * fixedVol, timeInMs, true, minBarsInput)
+    float sumVol       = pc.totalForTimeWhen(fixedVol, timeInMs, true, minBarsInput)
+    sumSrcVol / sumVol
+
+// Calculate RVWAP for each period
+float rvwap_1w   = rvwap_calc(time_1w)
+float rvwap_1m   = rvwap_calc(time_1m)
+float rvwap_3m   = rvwap_calc(time_3m)
+
+// ———————————————————— Plots {
+
+// 1W RVWAP
+plot(show_1w ? rvwap_1w : na, "1W RVWAP", color_1w)
+if show_1w and barstate.islast
+    label.new(bar_index, rvwap_1w, "1W", color=color.gray, textcolor=color.white, style=label.style_label_left)
+
+// 1M RVWAP
+plot(show_1m ? rvwap_1m : na, "1M RVWAP", color_1m)
+if show_1m and barstate.islast
+    label.new(bar_index, rvwap_1m, "1M", color=color.gray, textcolor=color.white, style=label.style_label_left)
+
+// 3M RVWAP
+plot(show_3m ? rvwap_3m : na, "3M RVWAP", color_3m)
+if show_3m and barstate.islast
+    label.new(bar_index, rvwap_3m, "3M", color=color.gray, textcolor=color.white, style=label.style_label_left)
+
+// }
