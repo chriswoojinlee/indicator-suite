@@ -20,12 +20,6 @@ fish(x, t) =>
     fish   := 0.5 * math.log((1 + val2) / math.max(1 - val2, 0.001)) + 0.5*nz(fish[1], 0)
     fish
 
-//EMA Function
-EMA(x, t)=>
-    EMA = x
-    EMA := na(EMA[1]) ? x : (x - nz(EMA[1]))*(2/(t + 1)) + nz(EMA[1])
-    EMA
-
 //Cumulative Average Function
 cmean(x)=>
     var xsum  = 0.0
@@ -50,10 +44,6 @@ comp(x, k_type, h_knee, l_knee, intensity)=>
 //Source - HLC/3 for all timeframes
 src = (high + low + close) / 3
 
-//Smoothing - Always on with period 2
-smooth = true
-smper = 2
-
 //Timeframe detection
 is_weekly_plus = timeframe.isweekly or timeframe.ismonthly
 is_daily = timeframe.isdaily
@@ -61,9 +51,9 @@ is_hourly = not timeframe.isdaily and not timeframe.isweekly and not timeframe.i
 is_minute = not timeframe.isdaily and not timeframe.isweekly and not timeframe.ismonthly and not is_hourly
 
 //Timeframe-specific settings
-per = is_weekly_plus ? 13 : is_daily ? 21 : is_hourly ? 13 : 8
-custom_ht = (is_weekly_plus or is_daily) ? 1.0 : is_hourly ? 1.5 : 2.0
-custom_lt = (is_weekly_plus or is_daily) ? -1.0 : is_hourly ? -1.5 : -2.0
+per = (is_weekly_plus or is_daily) ? 21 : is_hourly ? 13 : 8
+custom_ht = (is_weekly_plus or is_daily) ? 1 : is_hourly ? 1.5 : 2
+custom_lt = (is_weekly_plus or is_daily) ? -1 : is_hourly ? -1.5 : -2
 zone_upper_boundary = (is_weekly_plus or is_daily) ? 4.0 : is_hourly ? 4.5 : 5.0
 zone_lower_boundary = (is_weekly_plus or is_daily) ? -4.0 : is_hourly ? -4.5 : -5.0
 zone_upper_threshold = (is_weekly_plus or is_daily) ? 1.5 : is_hourly ? 2.0 : 2.5
@@ -113,10 +103,8 @@ showLines = input.bool(title="Show Divergence Lines", defval=true)
 //Fisher Transform
 fisher = nz(fish(src, per), 0)
 
-//Oscillator Type with smoothing
-osc1 = fisher
-osc2 = EMA(osc1, smooth ? smper : 1)
-osc  = use_comp ? comp(osc2, "Custom", custom_ht, custom_lt, comp_intensity) : osc2
+//Oscillator with compression
+osc = use_comp ? comp(fisher, "Custom", custom_ht, custom_lt, comp_intensity) : fisher
 
 //Thresholds
 hth = custom_ht

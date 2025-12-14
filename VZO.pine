@@ -16,8 +16,8 @@
 //
 //  Multi-Timeframe Auto-Detection:
 //    LTF (1m-30m): VZO=13, MA=5
-//    MTF (1H-4H):  VZO=21, MA=8
-//    HTF (6H+):    VZO=34, MA=13
+//    MTF (1H-12H):  VZO=21, MA=8
+//    HTF (1D+):    VZO=34, MA=13
 
 indicator("VZO", shorttitle="VZO", precision=1)
 
@@ -48,11 +48,11 @@ if tf_in_minutes <= 30  // LTF: 1m, 5m, 15m, 30m
     zLen := 13
     maLen := 5
     tf_category := "LTF"
-else if tf_in_minutes <= 240  // MTF: 1H (60m), 2H (120m), 4H (240m)
+else if tf_in_minutes <= 720  // MTF: 1H (60m), 2H (120m), 4H (240m), 6H (360m), 12H (720m)
     zLen := 21
     maLen := 8
     tf_category := "MTF"
-else  // HTF: 6H (360m) and above
+else  // HTF: 1D and above
     zLen := 34
     maLen := 13
     tf_category := "HTF"
