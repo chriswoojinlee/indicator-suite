@@ -163,19 +163,19 @@ Drawing() =>
 
     // Regular Bullish Divergence
     if Regular_Bullish_Divergence
-        BuLine := line.new(Low_Per_Bar, Low_Per_Hist, Low_Last_Bar, Low_Last_Hist, color=color.rgb(21, 151, 25), width=2)
+        BuLine := line.new(Low_Per_Bar, Low_Per_Hist, Low_Last_Bar, Low_Last_Hist, color=color.rgb(21, 151, 25), width=1)
         if Show_Label == 'Yes'
             BuLabel := label.new(Low_Last_Bar, Low_Last_Hist, get_label_text("reg_bull"), color=color.green, textcolor=color.white, size=size.small, style=label.style_label_up)
-        BuLine_OnChart := line.new(Low_Per_Bar, low[bar_index - Low_Per_Bar], Low_Last_Bar, low[bar_index - Low_Last_Bar], color=color.rgb(21, 151, 25), width=2, force_overlay=true)
+        BuLine_OnChart := line.new(Low_Per_Bar, low[bar_index - Low_Per_Bar], Low_Last_Bar, low[bar_index - Low_Last_Bar], color=color.rgb(21, 151, 25), width=1, force_overlay=true)
         if Show_Label == 'Yes'
             BuLabel_OnChart := label.new(Low_Last_Bar, low[bar_index - Low_Last_Bar], get_label_text("reg_bull"), color=color.green, textcolor=color.white, size=size.small, style=label.style_label_up, force_overlay=true)
 
     // Regular Bearish Divergence
     if Regular_Bearish_Divergence
-        BeLine := line.new(High_Per_Bar, High_Per_Hist, High_Last_Bar, High_Last_Hist, color=color.rgb(212, 44, 44), width=2)
+        BeLine := line.new(High_Per_Bar, High_Per_Hist, High_Last_Bar, High_Last_Hist, color=color.rgb(212, 44, 44), width=1)
         if Show_Label == 'Yes'
             BeLabel := label.new(High_Last_Bar, High_Last_Hist, get_label_text("reg_bear"), color=color.red, textcolor=color.white, size=size.small, style=label.style_label_down)
-        BeLine_OnChart := line.new(High_Per_Bar, high[bar_index - High_Per_Bar], High_Last_Bar, high[bar_index - High_Last_Bar], color=color.rgb(212, 44, 44), width=2, force_overlay=true)
+        BeLine_OnChart := line.new(High_Per_Bar, high[bar_index - High_Per_Bar], High_Last_Bar, high[bar_index - High_Last_Bar], color=color.rgb(212, 44, 44), width=1, force_overlay=true)
         if Show_Label == 'Yes'
             BeLabel_OnChart := label.new(High_Last_Bar, high[bar_index - High_Last_Bar], get_label_text("reg_bear"), color=color.red, textcolor=color.white, size=size.small, style=label.style_label_down, force_overlay=true)
 
