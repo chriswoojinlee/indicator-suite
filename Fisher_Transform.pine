@@ -59,12 +59,6 @@ zone_lower_boundary = (is_weekly_plus or is_daily) ? -4.0 : is_hourly ? -4.5 : -
 zone_upper_threshold = (is_weekly_plus or is_daily) ? 1.5 : is_hourly ? 2.0 : 2.5
 zone_lower_threshold = (is_weekly_plus or is_daily) ? -1.5 : is_hourly ? -2.0 : -2.5
 
-//Divergence settings - Timeframe specific
-lbR = (is_weekly_plus or is_daily) ? 5 : is_hourly ? 3 : 2
-lbL = (is_weekly_plus or is_daily) ? 5 : is_hourly ? 3 : 2
-rangeUpper = (is_weekly_plus or is_daily) ? 100 : is_hourly ? 50 : 30
-rangeLower = (is_weekly_plus or is_daily) ? 10 : is_hourly ? 5 : 3
-
 //Feature toggles - All enabled
 show_zones = true
 zone_transparency = 50
@@ -90,11 +84,6 @@ sell_signal_color = color.red
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 //User Inputs (Visible in Settings)
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-//Divergence Display Inputs
-plotBull = input.bool(title="Plot Bullish Divergence", defval=true)
-plotBear = input.bool(title="Plot Bearish Divergence", defval=true)
-showLines = input.bool(title="Show Divergence Lines", defval=true)
 
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Definitions
@@ -163,72 +152,6 @@ buy_signal = (osc <= lth) and (osc > osc[1]) and (osc[1] <= osc[2])
 //Sell Signal: When oscillator is in overbought zone and starts reversing downward
 sell_signal = (osc >= hth) and (osc < osc[1]) and (osc[1] >= osc[2])
 
-//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
-//Divergence Detection
-//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-bearColor = color.red
-bullColor = color.green
-textColor = color.white
-
-plFound = na(ta.pivotlow(osc, lbL, lbR)) ? false : true
-phFound = na(ta.pivothigh(osc, lbL, lbR)) ? false : true
-
-_inRange(cond) =>
-	bars = ta.barssince(cond == true)
-	rangeLower <= bars and bars <= rangeUpper
-
-//------------------------------------------------------------------------------
-// Line Drawing Function
-drawDivergenceLine(condition, x1, y1, x2, y2, lineColor, priceX1, priceY1, priceX2, priceY2) =>
-    if condition and showLines
-        // Draw line on Fisher pane
-        line.new(x1, y1, x2, y2, color=lineColor, width=1, style=line.style_solid)
-        // Draw line on price chart with force_overlay
-        line.new(priceX1, priceY1, priceX2, priceY2, color=lineColor, width=1, style=line.style_solid, force_overlay=true)
-
-//------------------------------------------------------------------------------
-// Regular Bullish
-// Fisher: Higher Low
-inRangePl = _inRange(plFound[1])
-oscHL = osc[lbR] > ta.valuewhen(plFound, osc[lbR], 1) and inRangePl
-
-// Price: Lower Low
-priceLL = low[lbR] < ta.valuewhen(plFound, low[lbR], 1)
-bullCondAlert = priceLL and oscHL and plFound
-bullCond = plotBull and bullCondAlert
-
-// Get previous pivot data for line drawing
-prevPivotBar = ta.valuewhen(plFound, bar_index[lbR], 1)
-prevPivotFisher = ta.valuewhen(plFound, osc[lbR], 1)
-prevPivotPrice = ta.valuewhen(plFound, low[lbR], 1)
-
-// Draw divergence lines for Regular Bullish
-if bullCond
-    drawDivergenceLine(true, prevPivotBar, prevPivotFisher, bar_index[lbR], osc[lbR], bullColor, 
-                      prevPivotBar, prevPivotPrice, bar_index[lbR], low[lbR])
-
-//------------------------------------------------------------------------------
-// Regular Bearish
-// Fisher: Lower High
-inRangePh = _inRange(phFound[1])
-oscLH = osc[lbR] < ta.valuewhen(phFound, osc[lbR], 1) and inRangePh
-
-// Price: Higher High
-priceHH = high[lbR] > ta.valuewhen(phFound, high[lbR], 1)
-
-bearCondAlert = priceHH and oscLH and phFound
-bearCond = plotBear and bearCondAlert
-
-// Get previous pivot data for bearish divergence line drawing
-prevPivotBarHigh = ta.valuewhen(phFound, bar_index[lbR], 1)
-prevPivotFisherHigh = ta.valuewhen(phFound, osc[lbR], 1)
-prevPivotPriceHigh = ta.valuewhen(phFound, high[lbR], 1)
-
-// Draw divergence lines for Regular Bearish
-if bearCond
-    drawDivergenceLine(true, prevPivotBarHigh, prevPivotFisherHigh, bar_index[lbR], osc[lbR], bearColor,
-                      prevPivotBarHigh, prevPivotPriceHigh, bar_index[lbR], high[lbR])
 
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Outputs
@@ -301,10 +224,6 @@ plotshape(show_extreme_marker ? extreme_lower_position : na,
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Alerts
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-// Divergence Alerts
-alertcondition(bullCondAlert, title="Bullish Fisher Divergence", message="Found a new Bullish Fisher Divergence")
-alertcondition(bearCondAlert, title="Bearish Fisher Divergence", message="Found a new Bearish Fisher Divergence")
 
 // Buy/Sell Signal Alerts
 alertcondition(buy_signal, title="Fisher Buy Signal", message="Fisher Transform: Buy Signal Detected")

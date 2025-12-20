@@ -1,0 +1,119 @@
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+//@version=5
+indicator("MMD", "MMD", overlay = true, max_lines_count = 500, max_labels_count = 500)
+//------------------------------------------------------------------------------
+//Settings
+//-----------------------------------------------------------------------------{
+length = input.int(3, 'Pivot Lookback', minval = 2)
+
+//Symbol A
+useSym1 = input(true, 'Comparison Symbol', inline = 'symA')
+sym1    = input.symbol('BINANCE:BTCUSDT.P', '', inline = 'symA')
+
+//Symbol B
+useSym2 = input(true, 'Comparison Symbol', inline = 'symB')
+sym2   = input.symbol('BINANCE:ETHUSDT.P', '', inline = 'symB')
+
+//Style
+bullDivCss = input.color(color.red, 'Swing High', group = 'Style')
+bearDivCss = input.color(color.green, 'Swing Low', group = 'Style')
+
+//-----------------------------------------------------------------------------}
+//Function
+//-----------------------------------------------------------------------------{
+n = bar_index
+
+get_hl() => [high, low, close]
+
+//Swing highs divergences
+get_divergence(ph, y2, sym_y2, css)=>
+    var float y1 = na
+    var float sym_y1 = na
+    var int x1 = na
+    var mmd = 0
+
+    if y2 != y2[1] and sym_y2 != sym_y2[1] 
+        //Test for mmd
+        if (y2 - y1) * (sym_y2 - sym_y1) < 0
+            line.new(n[length], y2, x1, y1, color = css)
+
+            mmd += 1
+        
+        sym_y1 := sym_y2
+        y1 := y2
+        x1 := n[length]
+    else if (ph and y2 > y2[1]) or (not ph and y2 < y2[1]) 
+        sym_y1 := na
+        y1 := y2
+        x1 := n[length]
+    
+    mmd
+
+//-----------------------------------------------------------------------------}
+//Main variables
+//-----------------------------------------------------------------------------{
+var phN = 0, var plN = 0
+var ph_mmd1 = 0.
+var pl_mmd1 = 0.
+var ph_mmd2 = 0.
+var pl_mmd2 = 0.
+
+ticker1 = syminfo.ticker(sym1)
+ticker2 = syminfo.ticker(sym2)
+
+//-----------------------------------------------------------------------------}
+//Detect swing highs/lows and divergences
+//-----------------------------------------------------------------------------{
+ph = fixnan(ta.pivothigh(length, length))
+pl = fixnan(ta.pivotlow(length, length))
+phN += ph != ph[1] ? 1 : 0
+plN += pl != pl[1] ? 1 : 0
+
+//Comparison symbol pivots
+[h1, l1, c1] = request.security(sym1, timeframe.period, get_hl())
+[h2, l2, c2] = request.security(sym2, timeframe.period, get_hl())
+
+//Detect swing high divergences
+if useSym1
+    sym_ph1 = fixnan(ta.pivothigh(h1, length, length))
+    sym_pl1 = fixnan(ta.pivotlow(l1, length, length))
+
+    ph_mmd1 := get_divergence(true, ph, sym_ph1, bullDivCss)
+    pl_mmd1 := get_divergence(false, pl, sym_pl1, bearDivCss)
+
+if useSym2
+    sym_ph2 = fixnan(ta.pivothigh(h2, length, length))
+    sym_pl2 = fixnan(ta.pivotlow(l2, length, length))
+    
+    ph_mmd2 := get_divergence(true, ph, sym_ph2, bullDivCss)
+    pl_mmd2 := get_divergence(false, pl, sym_pl2, bearDivCss)
+
+txt = ''
+if ph != ph[1]
+    if ph_mmd1 > ph_mmd1[1]
+        txt += 'MMD'
+    if ph_mmd2 > ph_mmd2[1]
+        txt += txt != '' ? ' | ' : ''
+        txt += 'MMD'
+
+    if txt != ''
+        label.new(n[length], ph, txt
+          , color = bullDivCss
+          , style = label.style_label_down
+          , textcolor = color.white
+          , size = size.tiny)
+else
+    if pl_mmd1 > pl_mmd1[1]
+        txt += 'MMD'
+    if pl_mmd2 > pl_mmd2[1]
+        txt += txt != '' ? ' | ' : ''
+        txt += 'MMD'
+
+    if txt != ''
+        label.new(n[length], pl, txt
+          , color = bearDivCss
+          , style = label.style_label_up
+          , textcolor = color.white
+          , size = size.tiny)
+    
