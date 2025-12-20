@@ -1,23 +1,24 @@
 // This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
 
 //@version=5
-indicator("MMD", "MMD", overlay = true, max_lines_count = 500, max_labels_count = 500)
+indicator("BTC/ETH MMD", "BTC/ETH MMD", overlay = true, max_lines_count = 500, max_labels_count = 500)
 //------------------------------------------------------------------------------
 //Settings
 //-----------------------------------------------------------------------------{
 length = input.int(3, 'Pivot Lookback', minval = 2)
-
-//Symbol A
-useSym1 = input(true, 'Comparison Symbol', inline = 'symA')
-sym1    = input.symbol('BINANCE:BTCUSDT.P', '', inline = 'symA')
-
-//Symbol B
-useSym2 = input(true, 'Comparison Symbol', inline = 'symB')
-sym2   = input.symbol('BINANCE:ETHUSDT.P', '', inline = 'symB')
+sym_btc = input.symbol('BINANCE:BTCUSDT.P', 'BTC Symbol')
+sym_eth = input.symbol('BINANCE:ETHUSDT.P', 'ETH Symbol')
 
 //Style
-bullDivCss = input.color(color.red, 'Swing High', group = 'Style')
-bearDivCss = input.color(color.green, 'Swing Low', group = 'Style')
+bullDivCss = input.color(color.red, 'Strong Bear (Swing High)', group = 'Style')
+bearDivCss = input.color(color.green, 'Strong Bull (Swing Low)', group = 'Style')
+
+//-----------------------------------------------------------------------------}
+// Check if current chart is BTC/ETH
+//-----------------------------------------------------------------------------{
+isBTC = str.contains(syminfo.ticker, "BTC") or str.contains(syminfo.basecurrency, "BTC")
+isETH = str.contains(syminfo.ticker, "ETH") or str.contains(syminfo.basecurrency, "ETH")
+isValidPair = isBTC or isETH
 
 //-----------------------------------------------------------------------------}
 //Function
@@ -26,94 +27,89 @@ n = bar_index
 
 get_hl() => [high, low, close]
 
-//Swing highs divergences
-get_divergence(ph, y2, sym_y2, css)=>
+//Detect strong divergences only
+get_strong_divergence(ph, y2, btc_y2, eth_y2, css)=>
     var float y1 = na
-    var float sym_y1 = na
+    var float btc_y1 = na
+    var float eth_y1 = na
     var int x1 = na
-    var mmd = 0
+    var strong_mmd = 0
 
-    if y2 != y2[1] and sym_y2 != sym_y2[1] 
-        //Test for mmd
-        if (y2 - y1) * (sym_y2 - sym_y1) < 0
-            line.new(n[length], y2, x1, y1, color = css)
-
-            mmd += 1
+    if y2 != y2[1] and btc_y2 != btc_y2[1] and eth_y2 != eth_y2[1]
+        // For pivot HIGHS (bearish): BTC makes LH while ETH makes HH
+        if ph
+            btc_lower = btc_y2 < btc_y1  // BTC making lower high
+            eth_higher = eth_y2 > eth_y1  // ETH making higher high
+            
+            if btc_lower and eth_higher
+                line.new(n[length], y2, x1, y1, color = css)
+                strong_mmd += 1
         
-        sym_y1 := sym_y2
+        // For pivot LOWS (bullish): BTC makes HL while ETH makes LL
+        else
+            btc_higher = btc_y2 > btc_y1  // BTC making higher low
+            eth_lower = eth_y2 < eth_y1   // ETH making lower low
+            
+            if btc_higher and eth_lower
+                line.new(n[length], y2, x1, y1, color = css)
+                strong_mmd += 1
+        
+        btc_y1 := btc_y2
+        eth_y1 := eth_y2
         y1 := y2
         x1 := n[length]
-    else if (ph and y2 > y2[1]) or (not ph and y2 < y2[1]) 
-        sym_y1 := na
+    else if (ph and y2 > y2[1]) or (not ph and y2 < y2[1])
+        btc_y1 := na
+        eth_y1 := na
         y1 := y2
         x1 := n[length]
     
-    mmd
+    strong_mmd
 
 //-----------------------------------------------------------------------------}
 //Main variables
 //-----------------------------------------------------------------------------{
 var phN = 0, var plN = 0
-var ph_mmd1 = 0.
-var pl_mmd1 = 0.
-var ph_mmd2 = 0.
-var pl_mmd2 = 0.
-
-ticker1 = syminfo.ticker(sym1)
-ticker2 = syminfo.ticker(sym2)
+var ph_strong_mmd = 0.
+var pl_strong_mmd = 0.
 
 //-----------------------------------------------------------------------------}
-//Detect swing highs/lows and divergences
+//Get BTC and ETH data
 //-----------------------------------------------------------------------------{
-ph = fixnan(ta.pivothigh(length, length))
-pl = fixnan(ta.pivotlow(length, length))
-phN += ph != ph[1] ? 1 : 0
-plN += pl != pl[1] ? 1 : 0
+[h_btc, l_btc, c_btc] = request.security(sym_btc, timeframe.period, get_hl())
+[h_eth, l_eth, c_eth] = request.security(sym_eth, timeframe.period, get_hl())
 
-//Comparison symbol pivots
-[h1, l1, c1] = request.security(sym1, timeframe.period, get_hl())
-[h2, l2, c2] = request.security(sym2, timeframe.period, get_hl())
+//-----------------------------------------------------------------------------}
+//Detect swing highs/lows and strong divergences
+//-----------------------------------------------------------------------------{
+if isValidPair
+    ph = fixnan(ta.pivothigh(length, length))
+    pl = fixnan(ta.pivotlow(length, length))
+    phN += ph != ph[1] ? 1 : 0
+    plN += pl != pl[1] ? 1 : 0
 
-//Detect swing high divergences
-if useSym1
-    sym_ph1 = fixnan(ta.pivothigh(h1, length, length))
-    sym_pl1 = fixnan(ta.pivotlow(l1, length, length))
-
-    ph_mmd1 := get_divergence(true, ph, sym_ph1, bullDivCss)
-    pl_mmd1 := get_divergence(false, pl, sym_pl1, bearDivCss)
-
-if useSym2
-    sym_ph2 = fixnan(ta.pivothigh(h2, length, length))
-    sym_pl2 = fixnan(ta.pivotlow(l2, length, length))
+    // Calculate BTC and ETH pivots
+    btc_ph = fixnan(ta.pivothigh(h_btc, length, length))
+    btc_pl = fixnan(ta.pivotlow(l_btc, length, length))
     
-    ph_mmd2 := get_divergence(true, ph, sym_ph2, bullDivCss)
-    pl_mmd2 := get_divergence(false, pl, sym_pl2, bearDivCss)
+    eth_ph = fixnan(ta.pivothigh(h_eth, length, length))
+    eth_pl = fixnan(ta.pivotlow(l_eth, length, length))
 
-txt = ''
-if ph != ph[1]
-    if ph_mmd1 > ph_mmd1[1]
-        txt += 'MMD'
-    if ph_mmd2 > ph_mmd2[1]
-        txt += txt != '' ? ' | ' : ''
-        txt += 'MMD'
+    // Detect strong divergences
+    ph_strong_mmd := get_strong_divergence(true, ph, btc_ph, eth_ph, bullDivCss)
+    pl_strong_mmd := get_strong_divergence(false, pl, btc_pl, eth_pl, bearDivCss)
 
-    if txt != ''
-        label.new(n[length], ph, txt
+    // Create labels
+    if ph != ph[1] and ph_strong_mmd > ph_strong_mmd[1]
+        label.new(n[length], ph, 'MMD'
           , color = bullDivCss
           , style = label.style_label_down
           , textcolor = color.white
-          , size = size.tiny)
-else
-    if pl_mmd1 > pl_mmd1[1]
-        txt += 'MMD'
-    if pl_mmd2 > pl_mmd2[1]
-        txt += txt != '' ? ' | ' : ''
-        txt += 'MMD'
-
-    if txt != ''
-        label.new(n[length], pl, txt
+          , size = size.small)
+    
+    if pl != pl[1] and pl_strong_mmd > pl_strong_mmd[1]
+        label.new(n[length], pl, 'MMD'
           , color = bearDivCss
           , style = label.style_label_up
           , textcolor = color.white
-          , size = size.tiny)
-    
+          , size = size.small)
