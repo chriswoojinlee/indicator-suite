@@ -1,0 +1,74 @@
+//@version=6
+indicator(title="Volume Weighted Average Price", shorttitle="VWAP", overlay=true, timeframe="", timeframe_gaps=true)
+
+var anchor = input.string(defval = "Session", title="Anchor Period",
+ options=["Session", "Week", "Month", "Quarter", "Year", "Decade", "Century", "Earnings", "Dividends", "Splits"], group="VWAP Settings")
+src = input(title = "Source", defval = hlc3, group="VWAP Settings", display = display.data_window)
+
+BANDS_GROUP = "Bands Settings"
+CALC_MODE_TOOLTIP = "Determines the units used to calculate the distance of the bands. When 'Percentage' is selected, a multiplier of 1 means 1%."
+calcModeInput = input.string("Standard Deviation", "Bands Calculation Mode", options = ["Standard Deviation", "Percentage"], group = BANDS_GROUP, tooltip = CALC_MODE_TOOLTIP, display = display.data_window)
+showBand_1 = input(true, title = "Show Bands", group = BANDS_GROUP, inline = "band_1", display = display.data_window)
+
+PREV_PERIOD_GROUP = "Previous Period Settings"
+showPrevPeriod = input.bool(true, title = "Show Previous Period VWAP", group = PREV_PERIOD_GROUP)
+
+cumVolume = ta.cum(volume)
+if barstate.islast and cumVolume == 0
+    runtime.error("No volume is provided by the data vendor.")
+
+new_earnings = request.earnings(syminfo.tickerid, earnings.actual, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+new_dividends = request.dividends(syminfo.tickerid, dividends.gross, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+new_split = request.splits(syminfo.tickerid, splits.denominator, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+
+isNewPeriod = switch anchor
+	"Earnings"  => not na(new_earnings)
+	"Dividends" => not na(new_dividends)
+	"Splits"    => not na(new_split)
+	"Session"   => timeframe.change("D")
+	"Week"      => timeframe.change("W")
+	"Month"     => timeframe.change("M")
+	"Quarter"   => timeframe.change("3M")
+	"Year"      => timeframe.change("12M")
+	"Decade"    => timeframe.change("12M") and year % 10 == 0
+	"Century"   => timeframe.change("12M") and year % 100 == 0
+	=> false
+
+isEsdAnchor = anchor == "Earnings" or anchor == "Dividends" or anchor == "Splits"
+if na(src[1]) and not isEsdAnchor
+	isNewPeriod := true
+
+float vwapValue = na
+float upperBandValue1 = na
+float lowerBandValue1 = na
+
+
+[_vwap, _stdevUpper, _] = ta.vwap(src, isNewPeriod, 1)
+vwapValue := _vwap
+stdevAbs = _stdevUpper - _vwap
+bandBasis = calcModeInput == "Standard Deviation" ? stdevAbs : _vwap * 0.01
+upperBandValue1 := _vwap + bandBasis
+lowerBandValue1 := _vwap - bandBasis
+
+// Store previous period's VWAP and bands
+var float prevVwap = na
+var float prevUpperBand = na
+var float prevLowerBand = na
+
+// When a new period starts, save the previous period's final values
+if isNewPeriod and not na(vwapValue[1])
+    prevVwap := vwapValue[1]
+    prevUpperBand := upperBandValue1[1]
+    prevLowerBand := lowerBandValue1[1]
+
+// Plot current period VWAP and bands
+plot(vwapValue, title = "VWAP", color = color.new(color.white, 25))
+upperBand_1 = plot(upperBandValue1, title="Upper Band", color = color.new(color.white, 100), display = showBand_1 ? display.all : display.none, editable = showBand_1)
+lowerBand_1 = plot(lowerBandValue1, title="Lower Band", color = color.new(color.white, 100), display = showBand_1 ? display.all : display.none, editable = showBand_1)
+fill(upperBand_1, lowerBand_1, title="Bands Fill", color = color.new(color.white, 85), display = showBand_1 ? display.all : display.none, editable = showBand_1)
+
+// Plot previous period VWAP and bands as extensions
+prevVwapPlot = plot(showPrevPeriod ? prevVwap : na, title = "Previous VWAP", color = color.new(color.white, 25), linewidth = 1, style = plot.style_line)
+prevUpperPlot = plot(showPrevPeriod and showBand_1 ? prevUpperBand : na, title = "Previous Upper Band", color = color.new(color.white, 100), linewidth = 1, style = plot.style_line)
+prevLowerPlot = plot(showPrevPeriod and showBand_1 ? prevLowerBand : na, title = "Previous Lower Band", color = color.new(color.white, 100), linewidth = 1, style = plot.style_line)
+fill(prevUpperPlot, prevLowerPlot, title = "Previous Bands Fill", color = color.new(color.white, 85))
