@@ -26,7 +26,7 @@ var string y = '', var string z = ''
 
 switch Market
     'Forex' => aa := 'FX', b := 'OANDA', c := 'FOREXCOM', d := 'FX_IDC', e := 'PEPPERSTONE', f := 'CAPITALCOM', g := 'ICMARKETS', h := 'EIGHTCAP', i := 'SAXO', j := 'BLACKBULL', k := 'VANTAGE', l := 'FUSIONMARKETS', m := 'FPMARKETS', nn := 'GBEBROKERS', o := 'IBKR', p := 'ACTIVTRADES', q := 'EASYMARKETS', r := 'FXOPEN', s := 'CITYINDEX', t := 'AFTERPRIME', u := 'SKILLING', v := 'WHSELFINVEST', w := 'TRADENATION', x := 'THINKMARKETS', y := 'CFI', z := 'PHILLIPNOVA'
-    'Crypto' => aa := 'BITSTAMP', b := 'COINBASE', c := 'INDEX', d := 'CRYPTO', e := 'BINANCE', f := 'BITFINEX', g := 'KRAKEN', h := 'OANDA', i := 'PEPPERSTONE', j := 'GEMINI', k := 'EIGHTCAP', l := 'ICMARKETS', m := 'VANTAGE', nn := 'CAPITALCOM', o := 'FOREXCOM', p := 'FX', q := 'BLACKBULL', r := 'SAXO', s := 'FUSIONMARKETS', t := 'CRYPTOCOM', u := 'EASYMARKETS', v := 'OKCOIN', w := 'FPMARKETS', x := 'AFTERPRIME', y := 'ACTIVTRADES', z := 'BTSE'
+    'Crypto' => aa := 'BINANCE', b := 'BYBIT', c := 'COINBASE', d := 'KRAKEN', e := 'BITSTAMP', f := 'BITFINEX',  g := 'GEMINI', h := 'OKX'
     'Stock' => aa := '-', b := '-', c := '-', d := '-', e := '-', f := '-', g := '-', h := '-', i := '-', j := '-', k := '-', l := '-', m := '-', nn := '-', o := '-', p := '-', q := '-', r := '-', s := '-', t := '-', u := '-', v := '-', w := '-', x := '-', y := '-', z := '-'
 
 V = nz(request.security(syminfo.tickerid, timeframe.period, volume, ignore_invalid_symbol=true))
