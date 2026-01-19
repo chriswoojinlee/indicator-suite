@@ -1,8 +1,19 @@
 //@version=6
 indicator(title="Volume Weighted Average Price", shorttitle="VWAP", overlay=true, timeframe="", timeframe_gaps=true)
 
-var anchor = input.string(defval = "Session", title="Anchor Period",
- options=["Session", "Week", "Month", "Quarter", "Year", "Decade", "Century", "Earnings", "Dividends", "Splits"], group="VWAP Settings")
+// Automatically determine anchor based on timeframe
+autoAnchor = switch
+    timeframe.in_seconds() < 3600 => "Week"           // Minute timeframes (< 1H)
+    timeframe.in_seconds() <= 14400 => "Month"        // 1H, 2H, 4H (1H to 4H)
+    timeframe.in_seconds() <= 43200 => "Quarter"      // 6H, 12H (6H to 12H)
+    => "Year"                                          // 1D and above
+
+var anchor = input.string(defval = "Auto", title="Anchor Period",
+ options=["Auto", "Session", "Week", "Month", "Quarter", "Year", "Decade", "Century", "Earnings", "Dividends", "Splits"], group="VWAP Settings")
+
+// Use auto anchor if "Auto" is selected, otherwise use manual selection
+actualAnchor = anchor == "Auto" ? autoAnchor : anchor
+
 src = input(title = "Source", defval = hlc3, group="VWAP Settings", display = display.data_window)
 
 BANDS_GROUP = "Bands Settings"
@@ -11,7 +22,7 @@ calcModeInput = input.string("Standard Deviation", "Bands Calculation Mode", opt
 showBand_1 = input(true, title = "Show Bands", group = BANDS_GROUP, inline = "band_1", display = display.data_window)
 
 PREV_PERIOD_GROUP = "Previous Period Settings"
-showPrevPeriod = input.bool(true, title = "Show Previous Period VWAP", group = PREV_PERIOD_GROUP)
+showPrevPeriod = input.bool(true, title = "Show Previous VWAP", group = PREV_PERIOD_GROUP)
 
 cumVolume = ta.cum(volume)
 if barstate.islast and cumVolume == 0
@@ -21,7 +32,7 @@ new_earnings = request.earnings(syminfo.tickerid, earnings.actual, barmerge.gaps
 new_dividends = request.dividends(syminfo.tickerid, dividends.gross, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
 new_split = request.splits(syminfo.tickerid, splits.denominator, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
 
-isNewPeriod = switch anchor
+isNewPeriod = switch actualAnchor
 	"Earnings"  => not na(new_earnings)
 	"Dividends" => not na(new_dividends)
 	"Splits"    => not na(new_split)
@@ -34,14 +45,13 @@ isNewPeriod = switch anchor
 	"Century"   => timeframe.change("12M") and year % 100 == 0
 	=> false
 
-isEsdAnchor = anchor == "Earnings" or anchor == "Dividends" or anchor == "Splits"
+isEsdAnchor = actualAnchor == "Earnings" or actualAnchor == "Dividends" or actualAnchor == "Splits"
 if na(src[1]) and not isEsdAnchor
 	isNewPeriod := true
 
 float vwapValue = na
 float upperBandValue1 = na
 float lowerBandValue1 = na
-
 
 [_vwap, _stdevUpper, _] = ta.vwap(src, isNewPeriod, 1)
 vwapValue := _vwap
