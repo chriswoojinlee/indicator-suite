@@ -1,33 +1,81 @@
 //@version=6
-indicator(title="Volume Weighted Average Price", shorttitle="VWAP", overlay=true, timeframe="", timeframe_gaps=true)
+indicator(title="VWAP", shorttitle="VWAP", overlay=true, timeframe="", timeframe_gaps=true)
 
-// Automatically determine anchor based on timeframe
-autoAnchor = switch
-    timeframe.in_seconds() < 3600 => "Week"           // Minute timeframes (< 1H)
-    timeframe.in_seconds() <= 14400 => "Month"        // 1H, 2H, 4H (1H to 4H)
-    timeframe.in_seconds() <= 43200 => "Quarter"      // 6H, 12H (6H to 12H)
-    => "Year"                                          // 1D and above
+// Exchange inputs
+EXCHANGES_GROUP = "Exchange Selection"
+useBinanceSpot = input.bool(true, "Binance Spot", group=EXCHANGES_GROUP)
+useCoinbaseSpot = input.bool(true, "Coinbase Spot", group=EXCHANGES_GROUP)
+useKrakenSpot = input.bool(true, "Kraken Spot", group=EXCHANGES_GROUP)
+useBinancePerp = input.bool(true, "Binance Perp", group=EXCHANGES_GROUP)
+useBybitPerp = input.bool(true, "Bybit Perp", group=EXCHANGES_GROUP)
+useOkxPerp = input.bool(true, "OKX Perp", group=EXCHANGES_GROUP)
+
+// Extract base symbol from current chart
+rawTicker = syminfo.ticker
+baseSymbol = str.replace(str.replace(str.replace(str.replace(str.replace(rawTicker, "USDT", ""), "USDC", ""), "USD", ""), "PERP", ""), ".P", "")
+
+// Anchor settings
+autoAnchor = timeframe.in_seconds() < 3600 ? "Week" : timeframe.in_seconds() <= 14400 ? "Month" : timeframe.in_seconds() <= 43200 ? "Quarter" : "Year"
 
 var anchor = input.string(defval = "Auto", title="Anchor Period",
  options=["Auto", "Session", "Week", "Month", "Quarter", "Year", "Decade", "Century", "Earnings", "Dividends", "Splits"], group="VWAP Settings")
 
-// Use auto anchor if "Auto" is selected, otherwise use manual selection
 actualAnchor = anchor == "Auto" ? autoAnchor : anchor
-
-src = input(title = "Source", defval = hlc3, group="VWAP Settings", display = display.data_window)
+src = input(title = "Source", defval = hlc3, group="VWAP Settings")
 
 BANDS_GROUP = "Bands Settings"
-CALC_MODE_TOOLTIP = "Determines the units used to calculate the distance of the bands. When 'Percentage' is selected, a multiplier of 1 means 1%."
-calcModeInput = input.string("Standard Deviation", "Bands Calculation Mode", options = ["Standard Deviation", "Percentage"], group = BANDS_GROUP, tooltip = CALC_MODE_TOOLTIP, display = display.data_window)
-showBand_1 = input(true, title = "Show Bands", group = BANDS_GROUP, inline = "band_1", display = display.data_window)
+calcModeInput = input.string("Standard Deviation", "Bands Calculation Mode", options = ["Standard Deviation", "Percentage"], group = BANDS_GROUP)
+showBand_1 = input(true, title = "Show Bands", group = BANDS_GROUP, inline = "band_1")
+bandMult = input.float(1.0, "Band Multiplier", group = BANDS_GROUP, step = 0.1)
 
 PREV_PERIOD_GROUP = "Previous Period Settings"
 showPrevPeriod = input.bool(true, title = "Show Previous VWAP", group = PREV_PERIOD_GROUP)
 
-cumVolume = ta.cum(volume)
-if barstate.islast and cumVolume == 0
-    runtime.error("No volume is provided by the data vendor.")
+// Fetch data with conditional security calls
+float bsPrice = na
+float bsVol = 0.0
+if useBinanceSpot
+    bsPrice := request.security("BINANCE:" + baseSymbol + "USDT", timeframe.period, src, ignore_invalid_symbol=true)
+    bsVol := request.security("BINANCE:" + baseSymbol + "USDT", timeframe.period, volume, ignore_invalid_symbol=true)
 
+float cbPrice = na
+float cbVol = 0.0
+if useCoinbaseSpot
+    cbPrice := request.security("COINBASE:" + baseSymbol + "USD", timeframe.period, src, ignore_invalid_symbol=true)
+    cbVol := request.security("COINBASE:" + baseSymbol + "USD", timeframe.period, volume, ignore_invalid_symbol=true)
+
+float krPrice = na
+float krVol = 0.0
+if useKrakenSpot
+    krPrice := request.security("KRAKEN:" + baseSymbol + "USD", timeframe.period, src, ignore_invalid_symbol=true)
+    krVol := request.security("KRAKEN:" + baseSymbol + "USD", timeframe.period, volume, ignore_invalid_symbol=true)
+
+float bpPrice = na
+float bpVol = 0.0
+if useBinancePerp
+    bpPrice := request.security("BINANCE:" + baseSymbol + "USDT.P", timeframe.period, src, ignore_invalid_symbol=true)
+    bpVol := request.security("BINANCE:" + baseSymbol + "USDT.P", timeframe.period, volume, ignore_invalid_symbol=true)
+
+float byPrice = na
+float byVol = 0.0
+if useBybitPerp
+    byPrice := request.security("BYBIT:" + baseSymbol + "USDT.P", timeframe.period, src, ignore_invalid_symbol=true)
+    byVol := request.security("BYBIT:" + baseSymbol + "USDT.P", timeframe.period, volume, ignore_invalid_symbol=true)
+
+float okPrice = na
+float okVol = 0.0
+if useOkxPerp
+    okPrice := request.security("OKX:" + baseSymbol + "USDT.P", timeframe.period, src, ignore_invalid_symbol=true)
+    okVol := request.security("OKX:" + baseSymbol + "USDT.P", timeframe.period, volume, ignore_invalid_symbol=true)
+
+// Aggregate
+totalVol = nz(bsVol) + nz(cbVol) + nz(krVol) + nz(bpVol) + nz(byVol) + nz(okVol)
+totalPV = nz(bsPrice * bsVol) + nz(cbPrice * cbVol) + nz(krPrice * krVol) + 
+          nz(bpPrice * bpVol) + nz(byPrice * byVol) + nz(okPrice * okVol)
+
+combinedPrice = totalVol > 0 ? totalPV / totalVol : src
+
+// Period detection
 new_earnings = request.earnings(syminfo.tickerid, earnings.actual, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
 new_dividends = request.dividends(syminfo.tickerid, dividends.gross, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
 new_split = request.splits(syminfo.tickerid, splits.denominator, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
@@ -46,39 +94,38 @@ isNewPeriod = switch actualAnchor
 	=> false
 
 isEsdAnchor = actualAnchor == "Earnings" or actualAnchor == "Dividends" or actualAnchor == "Splits"
-if na(src[1]) and not isEsdAnchor
+if na(combinedPrice[1]) and not isEsdAnchor
 	isNewPeriod := true
 
+// VWAP calculation
 float vwapValue = na
 float upperBandValue1 = na
 float lowerBandValue1 = na
 
-[_vwap, _stdevUpper, _] = ta.vwap(src, isNewPeriod, 1)
+[_vwap, _stdevUpper, _] = ta.vwap(combinedPrice, isNewPeriod, 1)
 vwapValue := _vwap
 stdevAbs = _stdevUpper - _vwap
-bandBasis = calcModeInput == "Standard Deviation" ? stdevAbs : _vwap * 0.01
+bandBasis = calcModeInput == "Standard Deviation" ? stdevAbs * bandMult : _vwap * (0.01 * bandMult)
 upperBandValue1 := _vwap + bandBasis
 lowerBandValue1 := _vwap - bandBasis
 
-// Store previous period's VWAP and bands
+// Store previous period
 var float prevVwap = na
 var float prevUpperBand = na
 var float prevLowerBand = na
 
-// When a new period starts, save the previous period's final values
 if isNewPeriod and not na(vwapValue[1])
     prevVwap := vwapValue[1]
     prevUpperBand := upperBandValue1[1]
     prevLowerBand := lowerBandValue1[1]
 
-// Plot current period VWAP and bands
-plot(vwapValue, title = "VWAP", color = color.new(color.white, 25))
-upperBand_1 = plot(upperBandValue1, title="Upper Band", color = color.new(color.white, 100), display = showBand_1 ? display.all : display.none, editable = showBand_1)
-lowerBand_1 = plot(lowerBandValue1, title="Lower Band", color = color.new(color.white, 100), display = showBand_1 ? display.all : display.none, editable = showBand_1)
-fill(upperBand_1, lowerBand_1, title="Bands Fill", color = color.new(color.white, 85), display = showBand_1 ? display.all : display.none, editable = showBand_1)
+// Plots
+plot(vwapValue, title = "VWAP", color = color.new(color.white, 25), linewidth = 2)
+upperBand_1 = plot(upperBandValue1, title="Upper Band", color = color.new(color.white, 100), display = showBand_1 ? display.all : display.none)
+lowerBand_1 = plot(lowerBandValue1, title="Lower Band", color = color.new(color.white, 100), display = showBand_1 ? display.all : display.none)
+fill(upperBand_1, lowerBand_1, title="Bands Fill", color = color.new(color.white, 85), display = showBand_1 ? display.all : display.none)
 
-// Plot previous period VWAP and bands as extensions
-prevVwapPlot = plot(showPrevPeriod ? prevVwap : na, title = "Previous VWAP", color = color.new(color.white, 25), linewidth = 1, style = plot.style_line)
-prevUpperPlot = plot(showPrevPeriod and showBand_1 ? prevUpperBand : na, title = "Previous Upper Band", color = color.new(color.white, 100), linewidth = 1, style = plot.style_line)
-prevLowerPlot = plot(showPrevPeriod and showBand_1 ? prevLowerBand : na, title = "Previous Lower Band", color = color.new(color.white, 100), linewidth = 1, style = plot.style_line)
+prevVwapPlot = plot(showPrevPeriod ? prevVwap : na, title = "Previous VWAP", color = color.new(color.white, 25), linewidth = 2)
+prevUpperPlot = plot(showPrevPeriod and showBand_1 ? prevUpperBand : na, title = "Previous Upper Band", color = color.new(color.white, 100), linewidth = 1)
+prevLowerPlot = plot(showPrevPeriod and showBand_1 ? prevLowerBand : na, title = "Previous Lower Band", color = color.new(color.white, 100), linewidth = 1)
 fill(prevUpperPlot, prevLowerPlot, title = "Previous Bands Fill", color = color.new(color.white, 85))
