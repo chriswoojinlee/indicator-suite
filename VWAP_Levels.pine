@@ -1,0 +1,436 @@
+//@version=6
+indicator(title="VWAP Levels", shorttitle="VWAP Levels", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ============================================================================
+// SYMBOL EXTRACTION & EXCHANGE DATA (HARDCODED)
+// ============================================================================
+rawTicker = syminfo.ticker
+baseSymbol = str.replace(str.replace(str.replace(str.replace(str.replace(rawTicker, "USDT", ""), "USDC", ""), "USD", ""), "PERP", ""), ".P", "")
+src = hlc3
+
+// Binance Spot
+bsPrice = request.security("BINANCE:" + baseSymbol + "USDT", timeframe.period, src, ignore_invalid_symbol=true)
+bsVol = request.security("BINANCE:" + baseSymbol + "USDT", timeframe.period, volume, ignore_invalid_symbol=true)
+
+// Coinbase Spot
+cbPrice = request.security("COINBASE:" + baseSymbol + "USD", timeframe.period, src, ignore_invalid_symbol=true)
+cbVol = request.security("COINBASE:" + baseSymbol + "USD", timeframe.period, volume, ignore_invalid_symbol=true)
+
+// Kraken Spot
+krPrice = request.security("KRAKEN:" + baseSymbol + "USD", timeframe.period, src, ignore_invalid_symbol=true)
+krVol = request.security("KRAKEN:" + baseSymbol + "USD", timeframe.period, volume, ignore_invalid_symbol=true)
+
+// Binance Perp
+bpPrice = request.security("BINANCE:" + baseSymbol + "USDT.P", timeframe.period, src, ignore_invalid_symbol=true)
+bpVol = request.security("BINANCE:" + baseSymbol + "USDT.P", timeframe.period, volume, ignore_invalid_symbol=true)
+
+// Bybit Perp
+byPrice = request.security("BYBIT:" + baseSymbol + "USDT.P", timeframe.period, src, ignore_invalid_symbol=true)
+byVol = request.security("BYBIT:" + baseSymbol + "USDT.P", timeframe.period, volume, ignore_invalid_symbol=true)
+
+// OKX Perp
+okPrice = request.security("OKX:" + baseSymbol + "USDT.P", timeframe.period, src, ignore_invalid_symbol=true)
+okVol = request.security("OKX:" + baseSymbol + "USDT.P", timeframe.period, volume, ignore_invalid_symbol=true)
+
+// Aggregate
+totalVol = nz(bsVol) + nz(cbVol) + nz(krVol) + nz(bpVol) + nz(byVol) + nz(okVol)
+totalPV = nz(bsPrice * bsVol) + nz(cbPrice * cbVol) + nz(krPrice * krVol) + nz(bpPrice * bpVol) + nz(byPrice * byVol) + nz(okPrice * okVol)
+combinedPrice = totalVol > 0 ? totalPV / totalVol : src
+
+// ============================================================================
+// CALCULATION SETTINGS
+// ============================================================================
+CALC_GROUP = "calculation settings"
+calcModeInput = input.string("Standard Deviation", "Bands Calculation Mode", options=["Standard Deviation", "Percentage"], group=CALC_GROUP, display=display.none)
+bandMult = input.float(1.0, "Band Multiplier", group=CALC_GROUP, step=0.1, display=display.none)
+confluenceThreshold = input.float(0.1, "Confluence Threshold (%)", group=CALC_GROUP, step=0.01, minval=0.01, maxval=1.0, display=display.none)
+
+// ============================================================================
+// LABEL SETTINGS
+// ============================================================================
+LABEL_GROUP = "label settings"
+showLabels = input.bool(true, "Show Labels", group=LABEL_GROUP, display=display.none)
+labelSize = input.string("small", "Label Size", options=["tiny", "small", "normal"], group=LABEL_GROUP, display=display.none)
+lblSize = labelSize == "tiny" ? size.tiny : labelSize == "small" ? size.small : size.normal
+
+// ============================================================================
+// dw- (weekly developing)
+// ============================================================================
+DW_GROUP = "dw- (weekly developing)"
+show_dw_VWAP = input.bool(true, "dw-VWAP", group=DW_GROUP, inline="dw_vwap", display=display.none)
+color_dw_VWAP = input.color(color.new(color.white, 25), "", group=DW_GROUP, inline="dw_vwap", display=display.none)
+width_dw_VWAP = input.int(1, "", minval=1, maxval=4, group=DW_GROUP, inline="dw_vwap", display=display.none)
+style_dw_VWAP = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], group=DW_GROUP, inline="dw_vwap", display=display.none)
+
+show_dw_VAH = input.bool(true, "dw-VAH", group=DW_GROUP, inline="dw_vah", display=display.none)
+color_dw_VAH = input.color(color.new(color.white, 85), "", group=DW_GROUP, inline="dw_vah", display=display.none)
+width_dw_VAH = input.int(1, "", minval=1, maxval=4, group=DW_GROUP, inline="dw_vah", display=display.none)
+style_dw_VAH = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DW_GROUP, inline="dw_vah", display=display.none)
+
+show_dw_VAL = input.bool(true, "dw-VAL", group=DW_GROUP, inline="dw_val", display=display.none)
+color_dw_VAL = input.color(color.new(color.white, 85), "", group=DW_GROUP, inline="dw_val", display=display.none)
+width_dw_VAL = input.int(1, "", minval=1, maxval=4, group=DW_GROUP, inline="dw_val", display=display.none)
+style_dw_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DW_GROUP, inline="dw_val", display=display.none)
+
+// ============================================================================
+// pw- (weekly previous)
+// ============================================================================
+PW_GROUP = "pw- (weekly previous)"
+show_pw_VWAP = input.bool(true, "pw-VWAP", group=PW_GROUP, inline="pw_vwap", display=display.none)
+color_pw_VWAP = input.color(color.new(color.white, 25), "", group=PW_GROUP, inline="pw_vwap", display=display.none)
+width_pw_VWAP = input.int(1, "", minval=1, maxval=4, group=PW_GROUP, inline="pw_vwap", display=display.none)
+style_pw_VWAP = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], group=PW_GROUP, inline="pw_vwap", display=display.none)
+
+show_pw_VAH = input.bool(true, "pw-VAH", group=PW_GROUP, inline="pw_vah", display=display.none)
+color_pw_VAH = input.color(color.new(color.white, 85), "", group=PW_GROUP, inline="pw_vah", display=display.none)
+width_pw_VAH = input.int(1, "", minval=1, maxval=4, group=PW_GROUP, inline="pw_vah", display=display.none)
+style_pw_VAH = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=PW_GROUP, inline="pw_vah", display=display.none)
+
+show_pw_VAL = input.bool(true, "pw-VAL", group=PW_GROUP, inline="pw_val", display=display.none)
+color_pw_VAL = input.color(color.new(color.white, 85), "", group=PW_GROUP, inline="pw_val", display=display.none)
+width_pw_VAL = input.int(1, "", minval=1, maxval=4, group=PW_GROUP, inline="pw_val", display=display.none)
+style_pw_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=PW_GROUP, inline="pw_val", display=display.none)
+
+// ============================================================================
+// dm- (monthly developing)
+// ============================================================================
+DM_GROUP = "dm- (monthly developing)"
+show_dm_VWAP = input.bool(true, "dm-VWAP", group=DM_GROUP, inline="dm_vwap", display=display.none)
+color_dm_VWAP = input.color(color.new(color.white, 25), "", group=DM_GROUP, inline="dm_vwap", display=display.none)
+width_dm_VWAP = input.int(2, "", minval=1, maxval=4, group=DM_GROUP, inline="dm_vwap", display=display.none)
+style_dm_VWAP = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], group=DM_GROUP, inline="dm_vwap", display=display.none)
+
+show_dm_VAH = input.bool(true, "dm-VAH", group=DM_GROUP, inline="dm_vah", display=display.none)
+color_dm_VAH = input.color(color.new(color.white, 85), "", group=DM_GROUP, inline="dm_vah", display=display.none)
+width_dm_VAH = input.int(2, "", minval=1, maxval=4, group=DM_GROUP, inline="dm_vah", display=display.none)
+style_dm_VAH = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DM_GROUP, inline="dm_vah", display=display.none)
+
+show_dm_VAL = input.bool(true, "dm-VAL", group=DM_GROUP, inline="dm_val", display=display.none)
+color_dm_VAL = input.color(color.new(color.white, 85), "", group=DM_GROUP, inline="dm_val", display=display.none)
+width_dm_VAL = input.int(2, "", minval=1, maxval=4, group=DM_GROUP, inline="dm_val", display=display.none)
+style_dm_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DM_GROUP, inline="dm_val", display=display.none)
+
+// ============================================================================
+// pm- (monthly previous)
+// ============================================================================
+PM_GROUP = "pm- (monthly previous)"
+show_pm_VWAP = input.bool(true, "pm-VWAP", group=PM_GROUP, inline="pm_vwap", display=display.none)
+color_pm_VWAP = input.color(color.new(color.white, 25), "", group=PM_GROUP, inline="pm_vwap", display=display.none)
+width_pm_VWAP = input.int(2, "", minval=1, maxval=4, group=PM_GROUP, inline="pm_vwap", display=display.none)
+style_pm_VWAP = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], group=PM_GROUP, inline="pm_vwap", display=display.none)
+
+show_pm_VAH = input.bool(true, "pm-VAH", group=PM_GROUP, inline="pm_vah", display=display.none)
+color_pm_VAH = input.color(color.new(color.white, 85), "", group=PM_GROUP, inline="pm_vah", display=display.none)
+width_pm_VAH = input.int(2, "", minval=1, maxval=4, group=PM_GROUP, inline="pm_vah", display=display.none)
+style_pm_VAH = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=PM_GROUP, inline="pm_vah", display=display.none)
+
+show_pm_VAL = input.bool(true, "pm-VAL", group=PM_GROUP, inline="pm_val", display=display.none)
+color_pm_VAL = input.color(color.new(color.white, 85), "", group=PM_GROUP, inline="pm_val", display=display.none)
+width_pm_VAL = input.int(2, "", minval=1, maxval=4, group=PM_GROUP, inline="pm_val", display=display.none)
+style_pm_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=PM_GROUP, inline="pm_val", display=display.none)
+
+// ============================================================================
+// dq- (quarterly developing)
+// ============================================================================
+DQ_GROUP = "dq- (quarterly developing)"
+show_dq_VWAP = input.bool(true, "dq-VWAP", group=DQ_GROUP, inline="dq_vwap", display=display.none)
+color_dq_VWAP = input.color(color.new(color.white, 25), "", group=DQ_GROUP, inline="dq_vwap", display=display.none)
+width_dq_VWAP = input.int(3, "", minval=1, maxval=4, group=DQ_GROUP, inline="dq_vwap", display=display.none)
+style_dq_VWAP = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], group=DQ_GROUP, inline="dq_vwap", display=display.none)
+
+show_dq_VAH = input.bool(true, "dq-VAH", group=DQ_GROUP, inline="dq_vah", display=display.none)
+color_dq_VAH = input.color(color.new(color.white, 85), "", group=DQ_GROUP, inline="dq_vah", display=display.none)
+width_dq_VAH = input.int(3, "", minval=1, maxval=4, group=DQ_GROUP, inline="dq_vah", display=display.none)
+style_dq_VAH = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DQ_GROUP, inline="dq_vah", display=display.none)
+
+show_dq_VAL = input.bool(true, "dq-VAL", group=DQ_GROUP, inline="dq_val", display=display.none)
+color_dq_VAL = input.color(color.new(color.white, 85), "", group=DQ_GROUP, inline="dq_val", display=display.none)
+width_dq_VAL = input.int(3, "", minval=1, maxval=4, group=DQ_GROUP, inline="dq_val", display=display.none)
+style_dq_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DQ_GROUP, inline="dq_val", display=display.none)
+
+// ============================================================================
+// pq- (quarterly previous)
+// ============================================================================
+PQ_GROUP = "pq- (quarterly previous)"
+show_pq_VWAP = input.bool(true, "pq-VWAP", group=PQ_GROUP, inline="pq_vwap", display=display.none)
+color_pq_VWAP = input.color(color.new(color.white, 25), "", group=PQ_GROUP, inline="pq_vwap", display=display.none)
+width_pq_VWAP = input.int(3, "", minval=1, maxval=4, group=PQ_GROUP, inline="pq_vwap", display=display.none)
+style_pq_VWAP = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], group=PQ_GROUP, inline="pq_vwap", display=display.none)
+
+show_pq_VAH = input.bool(true, "pq-VAH", group=PQ_GROUP, inline="pq_vah", display=display.none)
+color_pq_VAH = input.color(color.new(color.white, 85), "", group=PQ_GROUP, inline="pq_vah", display=display.none)
+width_pq_VAH = input.int(3, "", minval=1, maxval=4, group=PQ_GROUP, inline="pq_vah", display=display.none)
+style_pq_VAH = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=PQ_GROUP, inline="pq_vah", display=display.none)
+
+show_pq_VAL = input.bool(true, "pq-VAL", group=PQ_GROUP, inline="pq_val", display=display.none)
+color_pq_VAL = input.color(color.new(color.white, 85), "", group=PQ_GROUP, inline="pq_val", display=display.none)
+width_pq_VAL = input.int(3, "", minval=1, maxval=4, group=PQ_GROUP, inline="pq_val", display=display.none)
+style_pq_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=PQ_GROUP, inline="pq_val", display=display.none)
+
+// ============================================================================
+// dy- (yearly developing)
+// ============================================================================
+DY_GROUP = "dy- (yearly developing)"
+show_dy_VWAP = input.bool(true, "dy-VWAP", group=DY_GROUP, inline="dy_vwap", display=display.none)
+color_dy_VWAP = input.color(color.new(color.white, 25), "", group=DY_GROUP, inline="dy_vwap", display=display.none)
+width_dy_VWAP = input.int(4, "", minval=1, maxval=4, group=DY_GROUP, inline="dy_vwap", display=display.none)
+style_dy_VWAP = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], group=DY_GROUP, inline="dy_vwap", display=display.none)
+
+show_dy_VAH = input.bool(true, "dy-VAH", group=DY_GROUP, inline="dy_vah", display=display.none)
+color_dy_VAH = input.color(color.new(color.white, 85), "", group=DY_GROUP, inline="dy_vah", display=display.none)
+width_dy_VAH = input.int(4, "", minval=1, maxval=4, group=DY_GROUP, inline="dy_vah", display=display.none)
+style_dy_VAH = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DY_GROUP, inline="dy_vah", display=display.none)
+
+show_dy_VAL = input.bool(true, "dy-VAL", group=DY_GROUP, inline="dy_val", display=display.none)
+color_dy_VAL = input.color(color.new(color.white, 85), "", group=DY_GROUP, inline="dy_val", display=display.none)
+width_dy_VAL = input.int(4, "", minval=1, maxval=4, group=DY_GROUP, inline="dy_val", display=display.none)
+style_dy_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DY_GROUP, inline="dy_val", display=display.none)
+
+// ============================================================================
+// py- (yearly previous)
+// ============================================================================
+PY_GROUP = "py- (yearly previous)"
+show_py_VWAP = input.bool(true, "py-VWAP", group=PY_GROUP, inline="py_vwap", display=display.none)
+color_py_VWAP = input.color(color.new(color.white, 25), "", group=PY_GROUP, inline="py_vwap", display=display.none)
+width_py_VWAP = input.int(4, "", minval=1, maxval=4, group=PY_GROUP, inline="py_vwap", display=display.none)
+style_py_VWAP = input.string("Dotted", "", options=["Solid", "Dashed", "Dotted"], group=PY_GROUP, inline="py_vwap", display=display.none)
+
+show_py_VAH = input.bool(true, "py-VAH", group=PY_GROUP, inline="py_vah", display=display.none)
+color_py_VAH = input.color(color.new(color.white, 85), "", group=PY_GROUP, inline="py_vah", display=display.none)
+width_py_VAH = input.int(4, "", minval=1, maxval=4, group=PY_GROUP, inline="py_vah", display=display.none)
+style_py_VAH = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=PY_GROUP, inline="py_vah", display=display.none)
+
+show_py_VAL = input.bool(true, "py-VAL", group=PY_GROUP, inline="py_val", display=display.none)
+color_py_VAL = input.color(color.new(color.white, 85), "", group=PY_GROUP, inline="py_val", display=display.none)
+width_py_VAL = input.int(4, "", minval=1, maxval=4, group=PY_GROUP, inline="py_val", display=display.none)
+style_py_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=PY_GROUP, inline="py_val", display=display.none)
+
+// ============================================================================
+// HELPER FUNCTION - STYLE CONVERTER
+// ============================================================================
+getLineStyle(string s) =>
+    switch s
+        "Solid" => line.style_solid
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+
+// ============================================================================
+// PERIOD DETECTION
+// ============================================================================
+isNewWeek = timeframe.change("W")
+isNewMonth = timeframe.change("M")
+isNewQuarter = timeframe.change("3M")
+isNewYear = timeframe.change("12M")
+
+if na(combinedPrice[1])
+    isNewWeek := true
+    isNewMonth := true
+    isNewQuarter := true
+    isNewYear := true
+
+// ============================================================================
+// VWAP CALCULATIONS
+// ============================================================================
+// Weekly
+[wVwap, wStdevUpper, _w] = ta.vwap(combinedPrice, isNewWeek, 1)
+wBandBasis = calcModeInput == "Standard Deviation" ? (wStdevUpper - wVwap) * bandMult : wVwap * (0.01 * bandMult)
+wVAH = wVwap + wBandBasis
+wVAL = wVwap - wBandBasis
+
+// Monthly
+[mVwap, mStdevUpper, _m] = ta.vwap(combinedPrice, isNewMonth, 1)
+mBandBasis = calcModeInput == "Standard Deviation" ? (mStdevUpper - mVwap) * bandMult : mVwap * (0.01 * bandMult)
+mVAH = mVwap + mBandBasis
+mVAL = mVwap - mBandBasis
+
+// Quarterly
+[qVwap, qStdevUpper, _q] = ta.vwap(combinedPrice, isNewQuarter, 1)
+qBandBasis = calcModeInput == "Standard Deviation" ? (qStdevUpper - qVwap) * bandMult : qVwap * (0.01 * bandMult)
+qVAH = qVwap + qBandBasis
+qVAL = qVwap - qBandBasis
+
+// Yearly
+[yVwap, yStdevUpper, _y] = ta.vwap(combinedPrice, isNewYear, 1)
+yBandBasis = calcModeInput == "Standard Deviation" ? (yStdevUpper - yVwap) * bandMult : yVwap * (0.01 * bandMult)
+yVAH = yVwap + yBandBasis
+yVAL = yVwap - yBandBasis
+
+// ============================================================================
+// STORE PREVIOUS PERIOD VALUES
+// ============================================================================
+var float pw_VWAP = na, var float pw_VAH = na, var float pw_VAL = na
+var float pm_VWAP = na, var float pm_VAH = na, var float pm_VAL = na
+var float pq_VWAP = na, var float pq_VAH = na, var float pq_VAL = na
+var float py_VWAP = na, var float py_VAH = na, var float py_VAL = na
+
+if isNewWeek and not na(wVwap[1])
+    pw_VWAP := wVwap[1]
+    pw_VAH := wVAH[1]
+    pw_VAL := wVAL[1]
+
+if isNewMonth and not na(mVwap[1])
+    pm_VWAP := mVwap[1]
+    pm_VAH := mVAH[1]
+    pm_VAL := mVAL[1]
+
+if isNewQuarter and not na(qVwap[1])
+    pq_VWAP := qVwap[1]
+    pq_VAH := qVAH[1]
+    pq_VAL := qVAL[1]
+
+if isNewYear and not na(yVwap[1])
+    py_VWAP := yVwap[1]
+    py_VAH := yVAH[1]
+    py_VAL := yVAL[1]
+
+// ============================================================================
+// PERSISTENT STORAGE FOR DRAWINGS
+// ============================================================================
+var array<line> drawnLines = array.new_line()
+var array<label> drawnLabels = array.new_label()
+
+// ============================================================================
+// TYPE DEFINITION FOR LEVEL DATA
+// ============================================================================
+type LevelData
+    float price
+    string name
+    int priority
+    color col
+    int width
+    string style
+    bool processed
+
+// ============================================================================
+// DELETE ALL PREVIOUS DRAWINGS (runs every bar)
+// ============================================================================
+if array.size(drawnLines) > 0
+    for i = array.size(drawnLines) - 1 to 0
+        line.delete(array.get(drawnLines, i))
+    array.clear(drawnLines)
+
+if array.size(drawnLabels) > 0
+    for i = array.size(drawnLabels) - 1 to 0
+        label.delete(array.get(drawnLabels, i))
+    array.clear(drawnLabels)
+
+// ============================================================================
+// CONFLUENCE DETECTION AND DRAWING (only on last bar)
+// ============================================================================
+if barstate.islast
+    // Array to store level data
+    var levels = array.new<LevelData>()
+    array.clear(levels)
+    
+    // Add all enabled levels (priority: dy=8, py=7, dq=6, pq=5, dm=4, pm=3, dw=2, pw=1)
+    // Yearly Developing
+    if show_dy_VWAP and not na(yVwap)
+        array.push(levels, LevelData.new(yVwap, "dy-VWAP", 8, color_dy_VWAP, width_dy_VWAP, style_dy_VWAP, false))
+    if show_dy_VAH and not na(yVAH)
+        array.push(levels, LevelData.new(yVAH, "dy-VAH", 8, color_dy_VAH, width_dy_VAH, style_dy_VAH, false))
+    if show_dy_VAL and not na(yVAL)
+        array.push(levels, LevelData.new(yVAL, "dy-VAL", 8, color_dy_VAL, width_dy_VAL, style_dy_VAL, false))
+    
+    // Yearly Previous
+    if show_py_VWAP and not na(py_VWAP)
+        array.push(levels, LevelData.new(py_VWAP, "py-VWAP", 7, color_py_VWAP, width_py_VWAP, style_py_VWAP, false))
+    if show_py_VAH and not na(py_VAH)
+        array.push(levels, LevelData.new(py_VAH, "py-VAH", 7, color_py_VAH, width_py_VAH, style_py_VAH, false))
+    if show_py_VAL and not na(py_VAL)
+        array.push(levels, LevelData.new(py_VAL, "py-VAL", 7, color_py_VAL, width_py_VAL, style_py_VAL, false))
+    
+    // Quarterly Developing
+    if show_dq_VWAP and not na(qVwap)
+        array.push(levels, LevelData.new(qVwap, "dq-VWAP", 6, color_dq_VWAP, width_dq_VWAP, style_dq_VWAP, false))
+    if show_dq_VAH and not na(qVAH)
+        array.push(levels, LevelData.new(qVAH, "dq-VAH", 6, color_dq_VAH, width_dq_VAH, style_dq_VAH, false))
+    if show_dq_VAL and not na(qVAL)
+        array.push(levels, LevelData.new(qVAL, "dq-VAL", 6, color_dq_VAL, width_dq_VAL, style_dq_VAL, false))
+    
+    // Quarterly Previous
+    if show_pq_VWAP and not na(pq_VWAP)
+        array.push(levels, LevelData.new(pq_VWAP, "pq-VWAP", 5, color_pq_VWAP, width_pq_VWAP, style_pq_VWAP, false))
+    if show_pq_VAH and not na(pq_VAH)
+        array.push(levels, LevelData.new(pq_VAH, "pq-VAH", 5, color_pq_VAH, width_pq_VAH, style_pq_VAH, false))
+    if show_pq_VAL and not na(pq_VAL)
+        array.push(levels, LevelData.new(pq_VAL, "pq-VAL", 5, color_pq_VAL, width_pq_VAL, style_pq_VAL, false))
+    
+    // Monthly Developing
+    if show_dm_VWAP and not na(mVwap)
+        array.push(levels, LevelData.new(mVwap, "dm-VWAP", 4, color_dm_VWAP, width_dm_VWAP, style_dm_VWAP, false))
+    if show_dm_VAH and not na(mVAH)
+        array.push(levels, LevelData.new(mVAH, "dm-VAH", 4, color_dm_VAH, width_dm_VAH, style_dm_VAH, false))
+    if show_dm_VAL and not na(mVAL)
+        array.push(levels, LevelData.new(mVAL, "dm-VAL", 4, color_dm_VAL, width_dm_VAL, style_dm_VAL, false))
+    
+    // Monthly Previous
+    if show_pm_VWAP and not na(pm_VWAP)
+        array.push(levels, LevelData.new(pm_VWAP, "pm-VWAP", 3, color_pm_VWAP, width_pm_VWAP, style_pm_VWAP, false))
+    if show_pm_VAH and not na(pm_VAH)
+        array.push(levels, LevelData.new(pm_VAH, "pm-VAH", 3, color_pm_VAH, width_pm_VAH, style_pm_VAH, false))
+    if show_pm_VAL and not na(pm_VAL)
+        array.push(levels, LevelData.new(pm_VAL, "pm-VAL", 3, color_pm_VAL, width_pm_VAL, style_pm_VAL, false))
+    
+    // Weekly Developing
+    if show_dw_VWAP and not na(wVwap)
+        array.push(levels, LevelData.new(wVwap, "dw-VWAP", 2, color_dw_VWAP, width_dw_VWAP, style_dw_VWAP, false))
+    if show_dw_VAH and not na(wVAH)
+        array.push(levels, LevelData.new(wVAH, "dw-VAH", 2, color_dw_VAH, width_dw_VAH, style_dw_VAH, false))
+    if show_dw_VAL and not na(wVAL)
+        array.push(levels, LevelData.new(wVAL, "dw-VAL", 2, color_dw_VAL, width_dw_VAL, style_dw_VAL, false))
+    
+    // Weekly Previous
+    if show_pw_VWAP and not na(pw_VWAP)
+        array.push(levels, LevelData.new(pw_VWAP, "pw-VWAP", 1, color_pw_VWAP, width_pw_VWAP, style_pw_VWAP, false))
+    if show_pw_VAH and not na(pw_VAH)
+        array.push(levels, LevelData.new(pw_VAH, "pw-VAH", 1, color_pw_VAH, width_pw_VAH, style_pw_VAH, false))
+    if show_pw_VAL and not na(pw_VAL)
+        array.push(levels, LevelData.new(pw_VAL, "pw-VAL", 1, color_pw_VAL, width_pw_VAL, style_pw_VAL, false))
+    
+    // Process levels and find confluences
+    int numLevels = array.size(levels)
+    float thresholdPct = confluenceThreshold / 100.0
+    
+    if numLevels > 0
+        for i = 0 to numLevels - 1
+            LevelData baseLevel = array.get(levels, i)
+            
+            if not baseLevel.processed
+                // Find highest priority in cluster and collect all names
+                int highestPriority = baseLevel.priority
+                LevelData highestLevel = baseLevel
+                string combinedNames = baseLevel.name
+                
+                // Mark current as processed
+                baseLevel.processed := true
+                
+                // Check all other unprocessed levels for confluence
+                if i < numLevels - 1
+                    for j = i + 1 to numLevels - 1
+                        LevelData compareLevel = array.get(levels, j)
+                        
+                        if not compareLevel.processed
+                            float pctDiff = math.abs(baseLevel.price - compareLevel.price) / baseLevel.price
+                            
+                            if pctDiff <= thresholdPct
+                                // Within confluence threshold - add name
+                                combinedNames := combinedNames + "/" + compareLevel.name
+                                
+                                // Check if this level has higher priority
+                                if compareLevel.priority > highestPriority
+                                    highestPriority := compareLevel.priority
+                                    highestLevel := compareLevel
+                                
+                                // Mark as processed
+                                compareLevel.processed := true
+                
+                // Draw line and store reference
+                line newLine = line.new(bar_index, highestLevel.price, bar_index + 1, highestLevel.price, extend=extend.both, color=highestLevel.col, width=highestLevel.width, style=getLineStyle(highestLevel.style))
+                array.push(drawnLines, newLine)
+                
+                // Draw label - use label.style_label_left so text extends left from anchor
+                // Position anchor at right visible edge using chart.right_visible_bar_time
+                if showLabels
+                    color textCol = color.new(color.white, 25)
+                    label newLabel = label.new(chart.right_visible_bar_time, highestLevel.price, combinedNames, xloc=xloc.bar_time, yloc=yloc.price, style=label.style_label_left, color=color.new(color.white, 100), textcolor=textCol, size=lblSize)
+                    array.push(drawnLabels, newLabel)
