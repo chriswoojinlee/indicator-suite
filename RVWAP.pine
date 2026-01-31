@@ -11,8 +11,8 @@ string TT_SRC     = "The source used to calculate the VWAP. The default is the a
 string TT_TF      = "The timeframe used to calculate all RVWAPs. This ensures consistency across chart timeframes."
 
 // Inputs
-float srcInput    = input.source(hlc3, "Source", tooltip = TT_SRC)
-string tfInput    = input.timeframe("1D", "RVWAP Timeframe", tooltip = TT_TF)
+float srcInput    = input.source(hlc3, "Source", tooltip = TT_SRC, display = display.none)
+string tfInput    = input.timeframe("1D", "RVWAP Timeframe", tooltip = TT_TF, display = display.none)
 
 // Fetch data from fixed timeframe
 float fixedSrc = request.security(syminfo.tickerid, tfInput, hlc3, lookahead = barmerge.lookahead_off)
@@ -25,16 +25,16 @@ int time_3m       = 90  * MS_IN_DAY
 int time_1y       = 365 * MS_IN_DAY
 
 // Toggle for each period
-bool show_1w      = input.bool(true, "Show weekly RVWAP", inline = "1w1")
-color color_1w    = input.color(color.new(color.white, 25), "", inline = "1w1")
-bool show_1m      = input.bool(true, "Show monthly RVWAP", inline = "1m1")
-color color_1m    = input.color(color.new(color.white, 25), "", inline = "1m1")
-bool show_3m      = input.bool(true, "Show quarterly RVWAP", inline = "3m1")
-color color_3m    = input.color(color.new(color.white, 25), "", inline = "3m1")
-bool show_1y      = input.bool(true, "Show yearly RVWAP", inline = "1y1")
-color color_1y    = input.color(color.new(color.white, 25), "", inline = "1y1")
+bool show_1w      = input.bool(true, "Show weekly RVWAP", inline = "1w1", display = display.none)
+color color_1w    = input.color(color.new(color.white, 25), "", inline = "1w1", display = display.none)
+bool show_1m      = input.bool(true, "Show monthly RVWAP", inline = "1m1", display = display.none)
+color color_1m    = input.color(color.new(color.white, 25), "", inline = "1m1", display = display.none)
+bool show_3m      = input.bool(true, "Show quarterly RVWAP", inline = "3m1", display = display.none)
+color color_3m    = input.color(color.new(color.white, 25), "", inline = "3m1", display = display.none)
+bool show_1y      = input.bool(true, "Show yearly RVWAP", inline = "1y1", display = display.none)
+color color_1y    = input.color(color.new(color.white, 25), "", inline = "1y1", display = display.none)
 
-int minBarsInput    = input.int(10, "Minimum Bars", tooltip = "Minimum number of bars to keep in the window.")
+int minBarsInput    = input.int(10, "Minimum Bars", tooltip = "Minimum number of bars to keep in the window.", display = display.none)
 
 // ———————————————————— Calculations {
 
