@@ -35,7 +35,7 @@ totalPV = nz(bsPrice * bsVol) + nz(cbPrice * cbVol) + nz(krPrice * krVol) + nz(b
 combinedPrice = totalVol > 0 ? totalPV / totalVol : src
 
 bandMult = 1.0
-confluenceThreshold = input.float(0.1, "Confluence Threshold (%)", group="Settings", step=0.01, minval=0.01, maxval=1.0, display=display.none)
+confluenceThreshold = input.float(0.25, "Confluence Threshold (%)", group="Settings", step=0.01, minval=0.01, maxval=1.0, display=display.none)
 labelSize = input.string("normal", "Label Size", options=["tiny", "small", "normal"], group="Settings", display=display.none)
 lblSize = labelSize == "tiny" ? size.tiny : labelSize == "small" ? size.small : size.normal
 
