@@ -24,17 +24,43 @@ int time_1m       = 30  * MS_IN_DAY
 int time_3m       = 90  * MS_IN_DAY
 int time_1y       = 365 * MS_IN_DAY
 
-// Toggle for each period
-bool show_1w      = input.bool(true, "Show weekly RVWAP", inline = "1w1", display = display.none)
-color color_1w    = input.color(color.new(color.white, 25), "", inline = "1w1", display = display.none)
-bool show_1m      = input.bool(true, "Show monthly RVWAP", inline = "1m1", display = display.none)
-color color_1m    = input.color(color.new(color.white, 25), "", inline = "1m1", display = display.none)
-bool show_3m      = input.bool(true, "Show quarterly RVWAP", inline = "3m1", display = display.none)
-color color_3m    = input.color(color.new(color.white, 25), "", inline = "3m1", display = display.none)
-bool show_1y      = input.bool(true, "Show yearly RVWAP", inline = "1y1", display = display.none)
-color color_1y    = input.color(color.new(color.white, 25), "", inline = "1y1", display = display.none)
+// Weekly RVWAP inputs
+bool show_1w      = input.bool(false, "Show weekly RVWAP", inline = "1w1", group = "Weekly RVWAP", display = display.none)
+color color_1w    = input.color(color.new(color.white, 25), "", inline = "1w1", group = "Weekly RVWAP", display = display.none)
+bool show_1w_b1   = input.bool(false, "Band 1", inline = "1w2", group = "Weekly RVWAP", display = display.none)
+bool show_1w_b2   = input.bool(false, "Band 2", inline = "1w2", group = "Weekly RVWAP", display = display.none)
+bool show_1w_b3   = input.bool(false, "Band 3", inline = "1w2", group = "Weekly RVWAP", display = display.none)
+color line_1w     = input.color(color.new(color.white, 100), "Line", inline = "1w3", group = "Weekly RVWAP", display = display.none)
+color fill_1w     = input.color(color.new(color.white, 85), "Fill", inline = "1w3", group = "Weekly RVWAP", display = display.none)
 
-int minBarsInput    = input.int(10, "Minimum Bars", tooltip = "Minimum number of bars to keep in the window.", display = display.none)
+// Monthly RVWAP inputs
+bool show_1m      = input.bool(false, "Show monthly RVWAP", inline = "1m1", group = "Monthly RVWAP", display = display.none)
+color color_1m    = input.color(color.new(color.white, 25), "", inline = "1m1", group = "Monthly RVWAP", display = display.none)
+bool show_1m_b1   = input.bool(false, "Band 1", inline = "1m2", group = "Monthly RVWAP", display = display.none)
+bool show_1m_b2   = input.bool(false, "Band 2", inline = "1m2", group = "Monthly RVWAP", display = display.none)
+bool show_1m_b3   = input.bool(false, "Band 3", inline = "1m2", group = "Monthly RVWAP", display = display.none)
+color line_1m     = input.color(color.new(color.white, 100), "Line", inline = "1m3", group = "Monthly RVWAP", display = display.none)
+color fill_1m     = input.color(color.new(color.white, 85), "Fill", inline = "1m3", group = "Monthly RVWAP", display = display.none)
+
+// Quarterly RVWAP inputs
+bool show_3m      = input.bool(false, "Show quarterly RVWAP", inline = "3m1", group = "Quarterly RVWAP", display = display.none)
+color color_3m    = input.color(color.new(color.white, 25), "", inline = "3m1", group = "Quarterly RVWAP", display = display.none)
+bool show_3m_b1   = input.bool(false, "Band 1", inline = "3m2", group = "Quarterly RVWAP", display = display.none)
+bool show_3m_b2   = input.bool(false, "Band 2", inline = "3m2", group = "Quarterly RVWAP", display = display.none)
+bool show_3m_b3   = input.bool(false, "Band 3", inline = "3m2", group = "Quarterly RVWAP", display = display.none)
+color line_3m     = input.color(color.new(color.white, 100), "Line", inline = "3m3", group = "Quarterly RVWAP", display = display.none)
+color fill_3m     = input.color(color.new(color.white, 85), "Fill", inline = "3m3", group = "Quarterly RVWAP", display = display.none)
+
+// Yearly RVWAP inputs
+bool show_1y      = input.bool(false, "Show yearly RVWAP", inline = "1y1", group = "Yearly RVWAP", display = display.none)
+color color_1y    = input.color(color.new(color.white, 25), "", inline = "1y1", group = "Yearly RVWAP", display = display.none)
+bool show_1y_b1   = input.bool(false, "Band 1", inline = "1y2", group = "Yearly RVWAP", display = display.none)
+bool show_1y_b2   = input.bool(false, "Band 2", inline = "1y2", group = "Yearly RVWAP", display = display.none)
+bool show_1y_b3   = input.bool(false, "Band 3", inline = "1y2", group = "Yearly RVWAP", display = display.none)
+color line_1y     = input.color(color.new(color.white, 100), "Line", inline = "1y3", group = "Yearly RVWAP", display = display.none)
+color fill_1y     = input.color(color.new(color.white, 85), "Fill", inline = "1y3", group = "Yearly RVWAP", display = display.none)
+
+int minBarsInput  = input.int(10, "Minimum Bars", tooltip = "Minimum number of bars to keep in the window.", group = "Settings", display = display.none)
 
 // ———————————————————— Calculations {
 
@@ -44,24 +70,55 @@ import PineCoders/ConditionalAverages/1 as pc
 if barstate.islast and ta.cum(nz(fixedVol)) == 0
     runtime.error("No volume is provided by the data vendor.")
 
-// Function to calculate RVWAP
+// Function to calculate RVWAP and standard deviation
 rvwap_calc(int timeInMs) =>
     float sumSrcVol    = pc.totalForTimeWhen(fixedSrc * fixedVol, timeInMs, true, minBarsInput)
     float sumVol       = pc.totalForTimeWhen(fixedVol, timeInMs, true, minBarsInput)
-    sumSrcVol / sumVol
+    float sumSrc2Vol   = pc.totalForTimeWhen(fixedSrc * fixedSrc * fixedVol, timeInMs, true, minBarsInput)
+    float vwapValue    = sumSrcVol / sumVol
+    float variance     = sumSrc2Vol / sumVol - vwapValue * vwapValue
+    float stdev        = math.sqrt(math.max(variance, 0))
+    [vwapValue, stdev]
 
-// Calculate RVWAP for each period
-float rvwap_1w   = rvwap_calc(time_1w)
-float rvwap_1m   = rvwap_calc(time_1m)
-float rvwap_3m   = rvwap_calc(time_3m)
-float rvwap_1y   = rvwap_calc(time_1y)
+// Calculate RVWAP and stdev for each period
+[rvwap_1w, stdev_1w] = rvwap_calc(time_1w)
+[rvwap_1m, stdev_1m] = rvwap_calc(time_1m)
+[rvwap_3m, stdev_3m] = rvwap_calc(time_3m)
+[rvwap_1y, stdev_1y] = rvwap_calc(time_1y)
 
 // ———————————————————— Plots {
 
+// Determine max band level for each period to minimize plots
+int max_1w = show_1w_b3 ? 3 : show_1w_b2 ? 2 : show_1w_b1 ? 1 : 0
+int max_1m = show_1m_b3 ? 3 : show_1m_b2 ? 2 : show_1m_b1 ? 1 : 0
+int max_3m = show_3m_b3 ? 3 : show_3m_b2 ? 2 : show_3m_b1 ? 1 : 0
+int max_1y = show_1y_b3 ? 3 : show_1y_b2 ? 2 : show_1y_b1 ? 1 : 0
+
+// Weekly plots (4 plots max: vwap + outer band pair)
 plot(show_1w ? rvwap_1w : na, "Weekly RVWAP", color_1w, linewidth = 1)
+p_1w_u = plot(show_1w and max_1w > 0 ? rvwap_1w + max_1w * stdev_1w : na, "W +σ", line_1w, linewidth = 1)
+p_1w_d = plot(show_1w and max_1w > 0 ? rvwap_1w - max_1w * stdev_1w : na, "W -σ", line_1w, linewidth = 1)
+fill(p_1w_u, p_1w_d, show_1w and max_1w > 0 ? fill_1w : na, "W Fill")
+
+// Monthly plots
 plot(show_1m ? rvwap_1m : na, "Monthly RVWAP", color_1m, linewidth = 2)
+p_1m_u = plot(show_1m and max_1m > 0 ? rvwap_1m + max_1m * stdev_1m : na, "M +σ", line_1m, linewidth = 1)
+p_1m_d = plot(show_1m and max_1m > 0 ? rvwap_1m - max_1m * stdev_1m : na, "M -σ", line_1m, linewidth = 1)
+fill(p_1m_u, p_1m_d, show_1m and max_1m > 0 ? fill_1m : na, "M Fill")
+
+// Quarterly plots
 plot(show_3m ? rvwap_3m : na, "Quarterly RVWAP", color_3m, linewidth = 3)
+p_3m_u = plot(show_3m and max_3m > 0 ? rvwap_3m + max_3m * stdev_3m : na, "Q +σ", line_3m, linewidth = 1)
+p_3m_d = plot(show_3m and max_3m > 0 ? rvwap_3m - max_3m * stdev_3m : na, "Q -σ", line_3m, linewidth = 1)
+fill(p_3m_u, p_3m_d, show_3m and max_3m > 0 ? fill_3m : na, "Q Fill")
+
+// Yearly plots
 plot(show_1y ? rvwap_1y : na, "Yearly RVWAP", color_1y, linewidth = 4)
+p_1y_u = plot(show_1y and max_1y > 0 ? rvwap_1y + max_1y * stdev_1y : na, "Y +σ", line_1y, linewidth = 1)
+p_1y_d = plot(show_1y and max_1y > 0 ? rvwap_1y - max_1y * stdev_1y : na, "Y -σ", line_1y, linewidth = 1)
+fill(p_1y_u, p_1y_d, show_1y and max_1y > 0 ? fill_1y : na, "Y Fill")
+
+// ———————————————————— Labels {
 
 // Create label variables that persist across bars
 var label label_1w = na
