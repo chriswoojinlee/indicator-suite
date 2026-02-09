@@ -1,0 +1,96 @@
+//@version=6
+indicator("Volume", overlay=true, max_lines_count=500)
+
+// ============================================================================
+// SETTINGS
+// ============================================================================
+S_GROUP = "Settings"
+spikeMultiplier = input.float(2.0, "Spike Threshold (x EMA)", minval=1.0, maxval=10.0, step=0.25, group=S_GROUP, display=display.none, tooltip="Volume bars exceeding this multiple of the EMA are highlighted via candle coloring and POC lines.")
+
+P_GROUP = "POC"
+showPOC = input.bool(true, "Show POC Lines", group=P_GROUP, inline="poc", display=display.none)
+pocColor = input.color(color.new(color.aqua, 50), "", group=P_GROUP, inline="poc", display=display.none)
+pocWidth = input.int(3, "", minval=1, maxval=4, group=P_GROUP, inline="poc", display=display.none)
+pocStyle = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=P_GROUP, inline="poc", display=display.none)
+
+C_GROUP = "Colors"
+upColor = input.color(color.green, "Up", group=C_GROUP, inline="colors", display=display.none)
+downColor = input.color(color.red, "Down", group=C_GROUP, inline="colors", display=display.none)
+
+A_GROUP = "Alerts"
+alertEnabled = input.bool(false, "Enable Spike Alerts", group=A_GROUP, display=display.none)
+
+// ============================================================================
+// ADAPTIVE EMA LENGTH
+// ============================================================================
+tfMinutes = timeframe.in_seconds() / 60
+
+// LTF (30m and below): 13
+// MTF (2H-12H): 21
+// HTF (1D and above): 34
+emaLength = tfMinutes <= 30 ? 13 : tfMinutes <= 720 ? 21 : 34
+
+// POC only on 6H and below (360 minutes)
+pocAllowed = showPOC and tfMinutes <= 360
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+volEMA = ta.ema(volume, emaLength)
+isSpike = volume >= volEMA * spikeMultiplier
+isUp = close >= open
+
+// ============================================================================
+// CANDLE COLORING
+// ============================================================================
+spikeBarColor = isSpike ? (isUp ? upColor : downColor) : na
+barcolor(spikeBarColor, title="Spike Candle Color")
+
+// ============================================================================
+// POC LINE STYLE
+// ============================================================================
+getPocStyle() =>
+    switch pocStyle
+        "Solid" => line.style_solid
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+
+// ============================================================================
+// POC TRACKING
+// ============================================================================
+var array<float> pocPrices = array.new_float()
+var array<int> pocBars = array.new_int()
+var array<line> pocLines = array.new_line()
+
+// Add new POC on spike bars (only on 2H and below)
+if isSpike and pocAllowed
+    float pocPrice = hlc3
+    array.push(pocPrices, pocPrice)
+    array.push(pocBars, bar_index)
+    line newLine = line.new(bar_index, pocPrice, bar_index + 1, pocPrice, color=pocColor, width=pocWidth, style=getPocStyle())
+    array.push(pocLines, newLine)
+
+// Extend or terminate POC lines
+if array.size(pocPrices) > 0
+    int i = array.size(pocPrices) - 1
+    while i >= 0
+        float lvl = array.get(pocPrices, i)
+        line ln = array.get(pocLines, i)
+        int startBar = array.get(pocBars, i)
+
+        if bar_index > startBar and low <= lvl and high >= lvl
+            line.set_x2(ln, bar_index)
+            array.remove(pocPrices, i)
+            array.remove(pocBars, i)
+            array.remove(pocLines, i)
+        else
+            line.set_x2(ln, bar_index)
+
+        i -= 1
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+if alertEnabled and isSpike
+    volRatio = volume / volEMA
+    alert("Volume Spike | " + str.tostring(volRatio, "#.##") + "x EMA | " + (isUp ? "UP" : "DOWN") + " | " + syminfo.ticker, alert.freq_once_per_bar_close)
