@@ -1,0 +1,121 @@
+//@version=6
+indicator("Wyckoff", overlay=true, max_labels_count=500)
+
+// ============================================================================
+// SETTINGS
+// ============================================================================
+S_GROUP = "Settings"
+rangeLookback = input.int(20, "Range Lookback", minval=10, maxval=50, group=S_GROUP, display=display.none, tooltip="Number of bars used to assess price range compression/expansion and volume trends.")
+atrLength = input.int(14, "ATR Length", minval=1, group=S_GROUP, display=display.none)
+volEmaLength = input.int(14, "Volume EMA Length", minval=1, group=S_GROUP, display=display.none)
+compressionThreshold = input.float(0.8, "Compression Threshold", minval=0.3, maxval=1.0, step=0.05, group=S_GROUP, display=display.none, tooltip="ATR ratio below this value indicates range compression (accumulation/distribution).")
+expansionThreshold = input.float(1.3, "Expansion Threshold", minval=1.0, maxval=3.0, step=0.05, group=S_GROUP, display=display.none, tooltip="ATR ratio above this value indicates expansion (markup/markdown).")
+
+D_GROUP = "Display"
+showBG = input.bool(true, "Background Shading", group=D_GROUP, display=display.none)
+showLabels = input.bool(false, "Phase Labels", group=D_GROUP, display=display.none)
+bgOpacity = input.int(92, "Background Opacity (%)", minval=70, maxval=97, group=D_GROUP, display=display.none)
+accumColor = input.color(color.blue, "Accumulation", group=D_GROUP, inline="colors1", display=display.none)
+distribColor = input.color(color.orange, "Distribution", group=D_GROUP, inline="colors1", display=display.none)
+markupColor = input.color(color.teal, "Markup", group=D_GROUP, inline="colors2", display=display.none)
+markdownColor = input.color(color.red, "Markdown", group=D_GROUP, inline="colors2", display=display.none)
+
+// ============================================================================
+// CORE CALCULATIONS
+// ============================================================================
+// ATR and its SMA for compression/expansion detection
+atrVal = ta.atr(atrLength)
+atrSma = ta.sma(atrVal, rangeLookback)
+atrRatio = atrSma > 0 ? atrVal / atrSma : 1.0
+
+// Volume trend: current EMA vs longer-term SMA
+volEma = ta.ema(volume, volEmaLength)
+volSma = ta.sma(volume, rangeLookback)
+volDeclining = volEma < volSma
+
+// Price position relative to recent range
+rangeHigh = ta.highest(high, rangeLookback)
+rangeLow = ta.lowest(low, rangeLookback)
+rangeMid = (rangeHigh + rangeLow) / 2.0
+
+// Trend context: where is price coming from?
+// Use SMA slope over the lookback to determine prior trend
+smaVal = ta.sma(close, rangeLookback)
+smaSlope = smaVal - smaVal[rangeLookback / 2]
+
+// Close position within range (0 = range low, 1 = range high)
+rangeWidth = rangeHigh - rangeLow
+closePosition = rangeWidth > 0 ? (close - rangeLow) / rangeWidth : 0.5
+
+// ============================================================================
+// PHASE DETECTION
+// ============================================================================
+bool isCompressed = atrRatio < compressionThreshold
+bool isExpanded = atrRatio > expansionThreshold
+bool isTrending = not isCompressed and not isExpanded
+
+// Accumulation: compressed range + volume declining + prior trend was down or price near range lows
+bool isAccumulation = isCompressed and (smaSlope <= 0 or closePosition < 0.5)
+
+// Distribution: compressed range + volume declining + prior trend was up or price near range highs  
+bool isDistribution = isCompressed and (smaSlope > 0 or closePosition >= 0.5)
+
+// Markup: expanding or trending + bullish direction
+bool isMarkup = (isExpanded or isTrending) and close > smaVal and smaSlope > 0
+
+// Markdown: expanding or trending + bearish direction
+bool isMarkdown = (isExpanded or isTrending) and close < smaVal and smaSlope <= 0
+
+// ============================================================================
+// PHASE RESOLUTION (priority: expansion > compression)
+// ============================================================================
+var string phase = "None"
+
+if isMarkup
+    phase := "Markup"
+else if isMarkdown
+    phase := "Markdown"
+else if isAccumulation
+    phase := "Accumulation"
+else if isDistribution
+    phase := "Distribution"
+else
+    phase := "None"
+
+// ============================================================================
+// DISPLAY
+// ============================================================================
+// Background shading
+phaseColor = switch phase
+    "Accumulation" => color.new(accumColor, bgOpacity)
+    "Distribution" => color.new(distribColor, bgOpacity)
+    "Markup" => color.new(markupColor, bgOpacity)
+    "Markdown" => color.new(markdownColor, bgOpacity)
+    => na
+
+bgcolor(showBG ? phaseColor : na, title="Phase Background")
+
+// Phase transition labels
+var string prevPhase = "None"
+
+if showLabels and phase != prevPhase and phase != "None"
+    labelColor = switch phase
+        "Accumulation" => accumColor
+        "Distribution" => distribColor
+        "Markup" => markupColor
+        "Markdown" => markdownColor
+        => color.white
+
+    labelText = switch phase
+        "Accumulation" => "ACC"
+        "Distribution" => "DIST"
+        "Markup" => "MU"
+        "Markdown" => "MD"
+        => ""
+
+    labelStyle = (phase == "Markup" or phase == "Distribution") ? label.style_label_down : label.style_label_up
+    labelYloc = (phase == "Markup" or phase == "Distribution") ? yloc.abovebar : yloc.belowbar
+
+    label.new(bar_index, na, labelText, color=color.new(labelColor, 60), textcolor=color.new(color.white, 10), style=labelStyle, yloc=labelYloc, size=size.tiny)
+
+prevPhase := phase
