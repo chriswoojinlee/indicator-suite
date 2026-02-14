@@ -5,16 +5,19 @@ indicator("Volume", overlay=true, max_lines_count=500)
 // SETTINGS
 // ============================================================================
 S_GROUP = "Settings"
-spikeMultiplier = input.float(2.0, "Spike Threshold (x EMA)", minval=1.0, maxval=10.0, step=0.25, group=S_GROUP, display=display.none, tooltip="Volume bars exceeding this multiple of the EMA are highlighted via candle coloring and POC lines.")
+spikeMultiplier = input.float(2.0, "Spike Threshold (x EMA)", minval=1.0, maxval=10.0, step=0.25, group=S_GROUP, display=display.none,
+     tooltip="Volume bars exceeding this multiple of the EMA are highlighted via candle coloring and POC lines.")
 
 P_GROUP = "POC"
-showPOC = input.bool(true, "Show POC Lines", group=P_GROUP, inline="poc", display=display.none)
-pocColor = input.color(color.new(color.aqua, 50), "", group=P_GROUP, inline="poc", display=display.none)
-pocWidth = input.int(3, "", minval=1, maxval=4, group=P_GROUP, inline="poc", display=display.none)
-pocStyle = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=P_GROUP, inline="poc", display=display.none)
+showPOC      = input.bool(true, "Show POC Lines", group=P_GROUP, inline="poc", display=display.none)
+pocColor     = input.color(color.new(color.aqua, 50), "", group=P_GROUP, inline="poc", display=display.none)
+pocWidth     = input.int(4, "", minval=1, maxval=4, group=P_GROUP, inline="poc", display=display.none)
+pocStyle     = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=P_GROUP, inline="poc", display=display.none)
+pocBuckets   = input.int(20, "POC Resolution", minval=5, maxval=50, group=P_GROUP, display=display.none,
+     tooltip="Number of price buckets to divide each candle into for POC calculation. Higher = more precise but heavier.")
 
 C_GROUP = "Colors"
-upColor = input.color(color.green, "Up", group=C_GROUP, inline="colors", display=display.none)
+upColor   = input.color(color.green, "Up", group=C_GROUP, inline="colors", display=display.none)
 downColor = input.color(color.red, "Down", group=C_GROUP, inline="colors", display=display.none)
 
 A_GROUP = "Alerts"
@@ -25,20 +28,65 @@ alertEnabled = input.bool(false, "Enable Spike Alerts", group=A_GROUP, display=d
 // ============================================================================
 tfMinutes = timeframe.in_seconds() / 60
 
-// LTF (30m and below): 13
-// MTF (2H-12H): 21
-// HTF (1D and above): 34
 emaLength = tfMinutes <= 30 ? 13 : tfMinutes <= 720 ? 21 : 34
 
-// POC only on 6H and below (360 minutes)
+// POC only on 6H and below
 pocAllowed = showPOC and tfMinutes <= 360
+
+// ============================================================================
+// LTF DATA FOR POC
+// Pulls 1m bars within each HTF candle to build a volume profile.
+// Each LTF bar's volume is assigned to the price bucket where its
+// hlc3 falls. The bucket with the most volume is the POC.
+// ============================================================================
+[ltfHigh, ltfLow, ltfClose, ltfVol] = request.security_lower_tf(syminfo.tickerid, "1", [high, low, close, volume])
 
 // ============================================================================
 // CALCULATIONS
 // ============================================================================
-volEMA = ta.ema(volume, emaLength)
+volEMA  = ta.ema(volume, emaLength)
 isSpike = volume >= volEMA * spikeMultiplier
-isUp = close >= open
+isUp    = close >= open
+
+// ============================================================================
+// POC CALCULATION
+// Builds a volume profile from LTF bars within the current candle.
+// Divides the candle range into buckets, assigns each LTF bar's
+// volume to the bucket containing its typical price, then finds
+// the bucket with the highest accumulated volume.
+// ============================================================================
+calcPOC() =>
+    float pocPrice = hlc3  // fallback
+    int ltfSize = array.size(ltfVol)
+
+    if ltfSize > 0 and high != low
+        float bucketSize = (high - low) / pocBuckets
+        float[] bucketVol = array.new_float(pocBuckets, 0.0)
+
+        for k = 0 to ltfSize - 1
+            float lh = array.get(ltfHigh, k)
+            float ll = array.get(ltfLow, k)
+            float lc = array.get(ltfClose, k)
+            float lv = array.get(ltfVol, k)
+            float ltfTypical = (lh + ll + lc) / 3.0
+
+            int bucket = math.floor((ltfTypical - low) / bucketSize)
+            bucket := math.max(0, math.min(bucket, pocBuckets - 1))
+            array.set(bucketVol, bucket, array.get(bucketVol, bucket) + lv)
+
+        // Find bucket with max volume
+        float maxVol = 0.0
+        int maxBucket = 0
+        for k = 0 to pocBuckets - 1
+            float bv = array.get(bucketVol, k)
+            if bv > maxVol
+                maxVol := bv
+                maxBucket := k
+
+        // POC price = center of the winning bucket
+        pocPrice := low + (maxBucket + 0.5) * bucketSize
+
+    pocPrice
 
 // ============================================================================
 // CANDLE COLORING
@@ -59,23 +107,23 @@ getPocStyle() =>
 // POC TRACKING
 // ============================================================================
 var array<float> pocPrices = array.new_float()
-var array<int> pocBars = array.new_int()
-var array<line> pocLines = array.new_line()
+var array<int>   pocBars   = array.new_int()
+var array<line>  pocLines  = array.new_line()
 
-// Add new POC on spike bars (only on 2H and below)
 if isSpike and pocAllowed
-    float pocPrice = hlc3
+    float pocPrice = calcPOC()
     array.push(pocPrices, pocPrice)
     array.push(pocBars, bar_index)
-    line newLine = line.new(bar_index, pocPrice, bar_index + 1, pocPrice, color=pocColor, width=pocWidth, style=getPocStyle())
+    line newLine = line.new(bar_index, pocPrice, bar_index + 1, pocPrice,
+         color=pocColor, width=pocWidth, style=getPocStyle())
     array.push(pocLines, newLine)
 
-// Extend or terminate POC lines
+// Extend or terminate POC lines on sweep
 if array.size(pocPrices) > 0
     int i = array.size(pocPrices) - 1
     while i >= 0
         float lvl = array.get(pocPrices, i)
-        line ln = array.get(pocLines, i)
+        line ln   = array.get(pocLines, i)
         int startBar = array.get(pocBars, i)
 
         if bar_index > startBar and low <= lvl and high >= lvl

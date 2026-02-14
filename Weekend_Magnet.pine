@@ -1,0 +1,239 @@
+// This Pine Script™ source code is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+
+//@version=6
+indicator("Weekend Magnet", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ─────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────
+
+string GRP_CORE  = "Core"
+string GRP_STYLE = "Style"
+
+showHighs      = input.bool(true, "Show Weekend Highs", group=GRP_CORE, display=display.none)
+showLows       = input.bool(true, "Show Weekend Lows", group=GRP_CORE, display=display.none)
+useTrendFilter = input.bool(true, "4-Day Trend Filter", group=GRP_CORE, display=display.none,
+     tooltip="Only show levels when preceded by a qualifying 4-day trend. Disable to show all weekend ranges.")
+removeOnSweep  = input.bool(true, "Remove On Sweep", group=GRP_CORE, display=display.none,
+     tooltip="Stop extending a level once price sweeps through it.")
+maxLevels      = input.int(10, "Max Levels Shown", minval=1, maxval=50, group=GRP_CORE, display=display.none)
+
+highColor      = input.color(color.new(color.red, 30), "High Color", group=GRP_STYLE, display=display.none)
+lowColor       = input.color(color.new(color.green, 30), "Low Color", group=GRP_STYLE, display=display.none)
+unfilteredColor = input.color(color.new(color.gray, 70), "Unfiltered Color", group=GRP_STYLE, display=display.none,
+     tooltip="Color for levels that don't meet the 4-day trend filter (shown when filter is off).")
+lineWidth      = input.int(1, "Line Width", minval=1, maxval=4, group=GRP_STYLE, display=display.none)
+lineStyle      = input.string("Dashed", "Line Style", options=["Solid", "Dashed", "Dotted"], group=GRP_STYLE, display=display.none)
+showLabels     = input.bool(true, "Show Labels", group=GRP_STYLE, display=display.none)
+showBox        = input.bool(false, "Show Weekend Box", group=GRP_STYLE, display=display.none,
+     tooltip="Highlight the weekend session with a background box.")
+boxColor       = input.color(color.new(color.gray, 92), "Box Color", group=GRP_STYLE, display=display.none)
+
+// ─────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────
+
+getLineStyle(string s) =>
+    switch s
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+// Detect weekend: Saturday = 7, Sunday = 1 (dayofweek uses 1=Sunday...7=Saturday)
+isWeekend() =>
+    dow = dayofweek(time, "UTC")
+    dow == 7 or dow == 1
+
+// Detect first bar of the trading week (Monday)
+isNewWeek() =>
+    dow = dayofweek(time, "UTC")
+    dowPrev = dayofweek(time[1], "UTC")
+    // Current bar is weekday and previous was weekend, OR
+    // current bar is Monday (2) and previous was not Monday
+    (dow != 7 and dow != 1) and (dowPrev == 7 or dowPrev == 1)
+
+// ─────────────────────────────────────────────────────────────
+// WEEKEND DETECTION & DAILY TRACKING
+// ─────────────────────────────────────────────────────────────
+
+// Track daily lows/highs for the trend filter
+// We need the daily low of the 4 days before the weekend
+var float[] dailyHighs = array.new_float(0)
+var float[] dailyLows  = array.new_float(0)
+var int     dailyCount = 0
+
+// Detect new daily bar
+newDay = ta.change(time("D")) != 0
+
+// Track current day's high/low
+var float curDayHigh = na
+var float curDayLow  = na
+
+if newDay
+    // Store previous day before resetting
+    if not na(curDayHigh)
+        array.push(dailyHighs, curDayHigh)
+        array.push(dailyLows, curDayLow)
+        // Keep only last 10 days
+        if array.size(dailyHighs) > 10
+            array.shift(dailyHighs)
+            array.shift(dailyLows)
+    curDayHigh := high
+    curDayLow  := low
+else
+    curDayHigh := na(curDayHigh) ? high : math.max(curDayHigh, high)
+    curDayLow  := na(curDayLow)  ? low  : math.min(curDayLow, low)
+
+// Weekend range tracking
+var bool  inWeekend    = false
+var float weekendHigh  = na
+var float weekendLow   = na
+var int   weekendStart = na
+
+weekendNow = isWeekend()
+
+// Enter weekend
+if weekendNow and not inWeekend
+    inWeekend   := true
+    weekendHigh := high
+    weekendLow  := low
+    weekendStart := bar_index
+
+// Update weekend range
+if weekendNow and inWeekend
+    weekendHigh := math.max(weekendHigh, high)
+    weekendLow  := math.min(weekendLow, low)
+
+// ─────────────────────────────────────────────────────────────
+// LEVEL STORAGE
+// ─────────────────────────────────────────────────────────────
+
+// Store active levels as parallel arrays
+var float[] lvlPrice     = array.new_float(0)
+var int[]   lvlType      = array.new_int(0)     // 1 = high, -1 = low
+var bool[]  lvlFiltered  = array.new_bool(0)    // true = passes trend filter
+var int[]   lvlBar       = array.new_int(0)     // time where weekend ended
+var line[]  lvlLines     = array.new_line(0)
+var label[] lvlLabels    = array.new_label(0)
+
+// ─────────────────────────────────────────────────────────────
+// WEEKEND EXIT → CREATE LEVELS
+// ─────────────────────────────────────────────────────────────
+
+if not weekendNow and inWeekend
+    inWeekend := false
+
+    // Check 4-day trend filter
+    int sz = array.size(dailyLows)
+    bool downTrend = false
+    bool upTrend   = false
+
+    if sz >= 4
+        // Day 1 = 4 days ago, Day 4 = most recent day before weekend
+        float day1Low  = array.get(dailyLows, sz - 4)
+        float day4Low  = array.get(dailyLows, sz - 1)
+        float day1High = array.get(dailyHighs, sz - 4)
+        float day4High = array.get(dailyHighs, sz - 1)
+
+        downTrend := day4Low < day1Low
+        upTrend   := day4High > day1High
+
+    // Weekend low → valid target if preceded by downtrend
+    if showLows and not na(weekendLow)
+        bool passes = downTrend
+        if passes or not useTrendFilter
+            array.push(lvlPrice, weekendLow)
+            array.push(lvlType, -1)
+            array.push(lvlFiltered, passes)
+            array.push(lvlBar, time)
+            array.push(lvlLines, line(na))
+            array.push(lvlLabels, label(na))
+
+    // Weekend high → valid target if preceded by uptrend
+    if showHighs and not na(weekendHigh)
+        bool passes = upTrend
+        if passes or not useTrendFilter
+            array.push(lvlPrice, weekendHigh)
+            array.push(lvlType, 1)
+            array.push(lvlFiltered, passes)
+            array.push(lvlBar, time)
+            array.push(lvlLines, line(na))
+            array.push(lvlLabels, label(na))
+
+    // Draw weekend box
+    if showBox and not na(weekendStart) and not na(weekendHigh)
+        box.new(weekendStart, weekendHigh, bar_index - 1, weekendLow,
+             border_color=color.new(color.gray, 80), bgcolor=boxColor,
+             border_width=1, border_style=line.style_dotted)
+
+    weekendHigh  := na
+    weekendLow   := na
+    weekendStart := na
+
+// ─────────────────────────────────────────────────────────────
+// SWEEP CHECK & CLEANUP
+// ─────────────────────────────────────────────────────────────
+
+if removeOnSweep and array.size(lvlPrice) > 0
+    int sz = array.size(lvlPrice)
+    if sz > 0
+        for j = sz - 1 to 0
+            float p = array.get(lvlPrice, j)
+            int   t = array.get(lvlType, j)
+            bool swept = (t == 1 and high > p) or (t == -1 and low < p)
+            if swept
+                line.delete(array.get(lvlLines, j))
+                label.delete(array.get(lvlLabels, j))
+                array.remove(lvlPrice, j)
+                array.remove(lvlType, j)
+                array.remove(lvlFiltered, j)
+                array.remove(lvlBar, j)
+                array.remove(lvlLines, j)
+                array.remove(lvlLabels, j)
+
+// Cap total levels
+while array.size(lvlPrice) > maxLevels
+    line.delete(array.get(lvlLines, 0))
+    label.delete(array.get(lvlLabels, 0))
+    array.shift(lvlPrice)
+    array.shift(lvlType)
+    array.shift(lvlFiltered)
+    array.shift(lvlBar)
+    array.shift(lvlLines)
+    array.shift(lvlLabels)
+
+// ─────────────────────────────────────────────────────────────
+// DRAW / UPDATE LEVELS
+// ─────────────────────────────────────────────────────────────
+
+if array.size(lvlPrice) > 0
+    for j = 0 to array.size(lvlPrice) - 1
+        float p      = array.get(lvlPrice, j)
+        int   t      = array.get(lvlType, j)
+        bool  filt   = array.get(lvlFiltered, j)
+        int   startB = array.get(lvlBar, j)
+
+        color col = filt ? (t == 1 ? highColor : lowColor) : unfilteredColor
+
+        // Delete old line/label and redraw to extend
+        line.delete(array.get(lvlLines, j))
+        label.delete(array.get(lvlLabels, j))
+
+        array.set(lvlLines, j, line.new(
+             startB, p, startB, p,
+             color=col, width=lineWidth,
+             style=getLineStyle(lineStyle),
+             extend=extend.right,
+             xloc=xloc.bar_time))
+
+        if showLabels
+            string side = t == 1 ? "wknd High" : "wknd Low"
+            string filterTxt = filt ? "" : " (unfiltered)"
+            lblStyle = t == 1 ? label.style_label_lower_left : label.style_label_upper_left
+
+            array.set(lvlLabels, j, label.new(
+                 startB, p, side + filterTxt,
+                 color=color.new(color.black, 100), textcolor=col,
+                 style=lblStyle, size=size.small,
+                 xloc=xloc.bar_time))
