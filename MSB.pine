@@ -1,7 +1,3 @@
-// This Pine Script™ v6 indicator is subject to the Terms of Use:
-// https://www.tradingview.com/pine-script-docs/
-// © Woojin
-
 //@version=6
 indicator("MSB", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=200)
 
@@ -9,12 +5,10 @@ indicator("MSB", overlay=true, max_lines_count=500, max_labels_count=500, max_bo
 // INPUTS
 // ─────────────────────────────────────────────────────────────
 
-// ATR-Adaptive Pivot Detection
 atrLen               = input.int(14, "ATR Length", minval=5, maxval=50, tooltip="Period for ATR calculation used in pivot confirmation.")
-atrConfirmMult       = input.float(0.75, "ATR Confirmation Multiplier", minval=0.1, maxval=3.0, step=0.05, tooltip="Price must move this many ATRs away from a candidate swing to confirm it as a pivot. Lower = faster confirmation (more pivots, earlier signals). Higher = slower confirmation (fewer pivots, later but cleaner signals).")
-pivotSource          = input.string("Close", "Pivot Source", options=["Close", "Wick"], tooltip="Close: uses candle body closes for pivot detection. Wick: uses high/low wicks.")
+atrConfirmMult       = input.float(0.55, "ATR Confirmation Multiplier", minval=0.1, maxval=3.0, step=0.05, tooltip="Price must move this many ATRs away from a candidate swing to confirm it as a pivot. Lower = faster confirmation, more pivots. Higher = slower, cleaner.")
+pivotSource          = input.string("Close", "Pivot Source", options=["Close", "Wick"], tooltip="Close: candle body closes. Wick: high/low wicks.")
 
-// Alerts
 alertBullMSB         = input.bool(true, "Alert on Bullish MSB", group="Alerts")
 alertBearMSB         = input.bool(true, "Alert on Bearish MSB", group="Alerts")
 
@@ -28,7 +22,7 @@ color BULL_LABEL_COLOR = color.green
 color BEAR_LABEL_COLOR = color.red
 
 // ─────────────────────────────────────────────────────────────
-// ATR CALCULATION
+// ATR
 // ─────────────────────────────────────────────────────────────
 
 atrValue = ta.atr(atrLen)
@@ -36,91 +30,59 @@ atrValue = ta.atr(atrLen)
 // ─────────────────────────────────────────────────────────────
 // ATR-ADAPTIVE PIVOT DETECTION
 // ─────────────────────────────────────────────────────────────
-// Instead of fixed N-bar lookback, we track candidate swing
-// highs/lows and confirm them when price retreats by ATR * mult.
-//
-// Candidate swing high: the highest close (or wick) seen during
-// the current upward move. It stays a candidate until price
-// closes ATR * mult below it, at which point it becomes a
-// confirmed pivot high.
-//
-// This means:
-//   - Sharp reversals confirm pivots in 1-2 bars
-//   - Slow grinds take longer to confirm
-//   - Volatile assets auto-adjust via ATR scaling
-//   - No fixed delay baked in
 
-// Source values
 srcHigh = pivotSource == "Close" ? close : high
 srcLow  = pivotSource == "Close" ? close : low
 
-// Candidate tracking
 var float candidateHigh      = na
 var int   candidateHighBar   = na
 var float candidateLow       = na
 var int   candidateLowBar    = na
 
-// Confirmed pivots
 var float lastPivotHigh      = na
 var int   lastPivotHighBar   = na
 var float lastPivotLow       = na
 var int   lastPivotLowBar    = na
 
-// Swing direction tracker
-// 1 = currently in upswing (tracking candidate high)
-// -1 = currently in downswing (tracking candidate low)
 var int swingDir = 0
 
 pivotHighConfirmed = false
 pivotLowConfirmed  = false
 
-// ATR threshold for confirmation
 atrThresh = atrValue * atrConfirmMult
 
 if bar_index > atrLen
-    // ── UPSWING: tracking candidate high ──
     if swingDir >= 0
-        // Update candidate high if price makes new high
         if na(candidateHigh) or srcHigh > candidateHigh
             candidateHigh    := srcHigh
             candidateHighBar := bar_index
 
-        // Check if price has retreated enough to confirm the candidate
         dropFromHigh = candidateHigh - srcLow
         if dropFromHigh >= atrThresh and not na(candidateHigh)
-            // Confirm pivot high
             lastPivotHigh      := candidateHigh
             lastPivotHighBar   := candidateHighBar
             pivotHighConfirmed := true
+            swingDir           := -1
+            candidateLow       := srcLow
+            candidateLowBar    := bar_index
+            candidateHigh      := na
+            candidateHighBar   := na
 
-            // Switch to downswing, seed candidate low with current bar
-            swingDir         := -1
-            candidateLow     := srcLow
-            candidateLowBar  := bar_index
-            candidateHigh    := na
-            candidateHighBar := na
-
-    // ── DOWNSWING: tracking candidate low ──
     if swingDir == -1 and not pivotHighConfirmed
-        // Update candidate low if price makes new low
         if na(candidateLow) or srcLow < candidateLow
             candidateLow    := srcLow
             candidateLowBar := bar_index
 
-        // Check if price has rallied enough to confirm the candidate
         riseFromLow = srcHigh - candidateLow
         if riseFromLow >= atrThresh and not na(candidateLow)
-            // Confirm pivot low
             lastPivotLow      := candidateLow
             lastPivotLowBar   := candidateLowBar
             pivotLowConfirmed := true
-
-            // Switch to upswing, seed candidate high with current bar
-            swingDir         := 1
-            candidateHigh    := srcHigh
-            candidateHighBar := bar_index
-            candidateLow     := na
-            candidateLowBar  := na
+            swingDir          := 1
+            candidateHigh     := srcHigh
+            candidateHighBar  := bar_index
+            candidateLow      := na
+            candidateLowBar   := na
 
 // ─────────────────────────────────────────────────────────────
 // TREND STATE
@@ -129,28 +91,63 @@ if bar_index > atrLen
 var int trend = 0
 
 // ─────────────────────────────────────────────────────────────
-// SINGLE ACTIVE PIVOT LINE
+// COUNTER-TREND PIVOT TRACKING
 // ─────────────────────────────────────────────────────────────
+// After an MSB fires, we need to track new pivots on the
+// counter-trend side and update the pivot line to the most
+// recent one. This is what makes the line actionable.
+//
+// Bearish trend: track each new confirmed pivot HIGH and
+//   update the line downward as lower highs form.
+// Bullish trend: track each new confirmed pivot LOW and
+//   update the line upward as higher lows form.
+//
+// These are the levels the MSB detection checks against,
+// so updating them also means the next MSB fires at the
+// structurally correct, most recent level.
 
-var line activePivotLine = na
+var float activePivotLevel    = na
+var int   activePivotBar      = na
+
+var line  activePivotLine     = na
 needsPivotRedraw = false
 
-if pivotHighConfirmed or pivotLowConfirmed
+// Update counter-trend pivot when a new one confirms
+if trend > 0 and pivotLowConfirmed
+    // Bullish trend: new pivot low = updated bearish break level
+    activePivotLevel := lastPivotLow
+    activePivotBar   := lastPivotLowBar
+    needsPivotRedraw := true
+
+if trend < 0 and pivotHighConfirmed
+    // Bearish trend: new pivot high = updated bullish reclaim level
+    activePivotLevel := lastPivotHigh
+    activePivotBar   := lastPivotHighBar
+    needsPivotRedraw := true
+
+// Also update when any pivot confirms and trend is undefined
+if trend == 0 and (pivotHighConfirmed or pivotLowConfirmed)
     needsPivotRedraw := true
 
 // ─────────────────────────────────────────────────────────────
 // MSB DETECTION (counter-trend only)
 // ─────────────────────────────────────────────────────────────
+// Uses activePivotLevel when available (post-MSB tracking),
+// falls back to lastPivotHigh/Low for initial detection.
 
 bullMSB = false
-if not na(lastPivotHigh) and (trend <= 0)
-    if close > lastPivotHigh and close[1] <= lastPivotHigh
-        bullMSB := true
+if trend <= 0
+    float levelToBreak = trend < 0 and not na(activePivotLevel) ? activePivotLevel : lastPivotHigh
+    if not na(levelToBreak)
+        if close > levelToBreak and close[1] <= levelToBreak
+            bullMSB := true
 
 bearMSB = false
-if not na(lastPivotLow) and (trend >= 0)
-    if close < lastPivotLow and close[1] >= lastPivotLow
-        bearMSB := true
+if trend >= 0
+    float levelToBreak = trend > 0 and not na(activePivotLevel) ? activePivotLevel : lastPivotLow
+    if not na(levelToBreak)
+        if close < levelToBreak and close[1] >= levelToBreak
+            bearMSB := true
 
 // ─────────────────────────────────────────────────────────────
 // DEDUPLICATION
@@ -159,8 +156,24 @@ if not na(lastPivotLow) and (trend >= 0)
 var float lastBullMSBLevel = na
 var float lastBearMSBLevel = na
 
-bullMSBValid = bullMSB and (na(lastBullMSBLevel) or lastPivotHigh != lastBullMSBLevel or trend <= 0)
-bearMSBValid = bearMSB and (na(lastBearMSBLevel) or lastPivotLow != lastBearMSBLevel or trend >= 0)
+// Get the level that was actually broken for dedup
+float bullBreakLevel = trend < 0 and not na(activePivotLevel) ? activePivotLevel : lastPivotHigh
+float bearBreakLevel = trend > 0 and not na(activePivotLevel) ? activePivotLevel : lastPivotLow
+
+bullMSBValid = bullMSB and (na(lastBullMSBLevel) or bullBreakLevel != lastBullMSBLevel or trend <= 0)
+bearMSBValid = bearMSB and (na(lastBearMSBLevel) or bearBreakLevel != lastBearMSBLevel or trend >= 0)
+
+// Store the actual broken level/bar for drawing
+var float msbBrokenLevel    = na
+var int   msbBrokenLevelBar = na
+
+if bullMSBValid
+    msbBrokenLevel    := bullBreakLevel
+    msbBrokenLevelBar := trend < 0 and not na(activePivotBar) ? activePivotBar : lastPivotHighBar
+
+if bearMSBValid
+    msbBrokenLevel    := bearBreakLevel
+    msbBrokenLevelBar := trend > 0 and not na(activePivotBar) ? activePivotBar : lastPivotLowBar
 
 // ─────────────────────────────────────────────────────────────
 // TREND FLIP + STATE UPDATE
@@ -168,12 +181,18 @@ bearMSBValid = bearMSB and (na(lastBearMSBLevel) or lastPivotLow != lastBearMSBL
 
 if bullMSBValid
     trend            := 1
-    lastBullMSBLevel := lastPivotHigh
+    lastBullMSBLevel := bullBreakLevel
+    // Reset counter-trend tracking: now watching for pivot lows
+    activePivotLevel := lastPivotLow
+    activePivotBar   := lastPivotLowBar
     needsPivotRedraw := true
 
 if bearMSBValid
     trend            := -1
-    lastBearMSBLevel := lastPivotLow
+    lastBearMSBLevel := bearBreakLevel
+    // Reset counter-trend tracking: now watching for pivot highs
+    activePivotLevel := lastPivotHigh
+    activePivotBar   := lastPivotHighBar
     needsPivotRedraw := true
 
 // ─────────────────────────────────────────────────────────────
@@ -183,16 +202,25 @@ if bearMSBValid
 if needsPivotRedraw
     if not na(activePivotLine)
         line.delete(activePivotLine)
-    if trend >= 0 and not na(lastPivotLow)
+
+    if trend > 0 and not na(activePivotLevel)
+        // Bullish: show pivot low line (bearish break level) in RED
+        activePivotLine := line.new(
+             x1=activePivotBar, y1=activePivotLevel,
+             x2=bar_index, y2=activePivotLevel,
+             color=BEAR_COLOR, style=line.style_dashed, width=1, extend=extend.right)
+    else if trend < 0 and not na(activePivotLevel)
+        // Bearish: show pivot high line (bullish reclaim level) in GREEN
+        activePivotLine := line.new(
+             x1=activePivotBar, y1=activePivotLevel,
+             x2=bar_index, y2=activePivotLevel,
+             color=BULL_COLOR, style=line.style_dashed, width=1, extend=extend.right)
+    else if trend == 0 and not na(lastPivotLow)
+        // Undefined: default to showing pivot low
         activePivotLine := line.new(
              x1=lastPivotLowBar, y1=lastPivotLow,
              x2=bar_index, y2=lastPivotLow,
              color=BEAR_COLOR, style=line.style_dashed, width=1, extend=extend.right)
-    if trend < 0 and not na(lastPivotHigh)
-        activePivotLine := line.new(
-             x1=lastPivotHighBar, y1=lastPivotHigh,
-             x2=bar_index, y2=lastPivotHigh,
-             color=BULL_COLOR, style=line.style_dashed, width=1, extend=extend.right)
 
 // ─────────────────────────────────────────────────────────────
 // VISUAL: SINGLE MSB ON CHART
@@ -213,8 +241,8 @@ if bullMSBValid
          color=BULL_LABEL_COLOR, textcolor=color.white, size=size.small)
 
     activeMSBLine := line.new(
-         x1=lastPivotHighBar, y1=lastPivotHigh,
-         x2=bar_index, y2=lastPivotHigh,
+         x1=msbBrokenLevelBar, y1=msbBrokenLevel,
+         x2=bar_index, y2=msbBrokenLevel,
          color=BULL_COLOR, style=line.style_solid, width=1)
 
     if not na(activePivotLine)
@@ -232,8 +260,8 @@ if bearMSBValid
          color=BEAR_LABEL_COLOR, textcolor=color.white, size=size.small)
 
     activeMSBLine := line.new(
-         x1=lastPivotLowBar, y1=lastPivotLow,
-         x2=bar_index, y2=lastPivotLow,
+         x1=msbBrokenLevelBar, y1=msbBrokenLevel,
+         x2=bar_index, y2=msbBrokenLevel,
          color=BEAR_COLOR, style=line.style_solid, width=1)
 
     if not na(activePivotLine)
@@ -245,6 +273,7 @@ if bearMSBValid
 
 plot(lastPivotHigh, "Last Pivot High", color=color.new(color.white, 100), display=display.data_window)
 plot(lastPivotLow, "Last Pivot Low", color=color.new(color.white, 100), display=display.data_window)
+plot(activePivotLevel, "Active Pivot Level", color=color.new(color.white, 100), display=display.data_window)
 plot(bullMSBValid ? 1 : 0, "Bull MSB Signal", color=color.new(color.white, 100), display=display.data_window)
 plot(bearMSBValid ? 1 : 0, "Bear MSB Signal", color=color.new(color.white, 100), display=display.data_window)
 plot(trend, "Trend State", color=color.new(color.white, 100), display=display.data_window)
@@ -253,6 +282,6 @@ plot(trend, "Trend State", color=color.new(color.white, 100), display=display.da
 // ALERTS
 // ─────────────────────────────────────────────────────────────
 
-alertcondition(bullMSBValid and alertBullMSB, title="Bullish MSB", message="Bullish MSB: Trend flipped bullish — close broke above pivot high on {{ticker}} {{interval}}")
-alertcondition(bearMSBValid and alertBearMSB, title="Bearish MSB", message="Bearish MSB: Trend flipped bearish — close broke below pivot low on {{ticker}} {{interval}}")
-alertcondition((bullMSBValid and alertBullMSB) or (bearMSBValid and alertBearMSB), title="Any MSB", message="MSB trend flip on {{ticker}} {{interval}} — Check chart")
+alertcondition(bullMSBValid and alertBullMSB, title="Bullish MSB", message="Bullish MSB: Trend flipped bullish on {{ticker}} {{interval}}")
+alertcondition(bearMSBValid and alertBearMSB, title="Bearish MSB", message="Bearish MSB: Trend flipped bearish on {{ticker}} {{interval}}")
+alertcondition((bullMSBValid and alertBullMSB) or (bearMSBValid and alertBearMSB), title="Any MSB", message="MSB trend flip on {{ticker}} {{interval}}")
