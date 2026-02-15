@@ -1,3 +1,7 @@
+// This Pine Script™ v6 indicator is subject to the Terms of Use:
+// https://www.tradingview.com/pine-script-docs/
+// © Woojin
+
 //@version=6
 indicator("MSB", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=200)
 
@@ -9,11 +13,6 @@ indicator("MSB", overlay=true, max_lines_count=500, max_labels_count=500, max_bo
 atrLen               = input.int(14, "ATR Length", minval=5, maxval=50, tooltip="Period for ATR calculation used in pivot confirmation.")
 atrConfirmMult       = input.float(0.75, "ATR Confirmation Multiplier", minval=0.1, maxval=3.0, step=0.05, tooltip="Price must move this many ATRs away from a candidate swing to confirm it as a pivot. Lower = faster confirmation (more pivots, earlier signals). Higher = slower confirmation (fewer pivots, later but cleaner signals).")
 pivotSource          = input.string("Close", "Pivot Source", options=["Close", "Wick"], tooltip="Close: uses candle body closes for pivot detection. Wick: uses high/low wicks.")
-
-// MSB Validation
-requireDisplacement  = input.bool(true, "Require Displacement", tooltip="MSB candle must show momentum (body > avg body * multiplier) to confirm the break.")
-displacementMult     = input.float(1.25, "Displacement Body Multiplier", minval=0.5, maxval=5.0, step=0.1, tooltip="MSB candle body must be >= this multiple of the average body size.")
-displacementLookback = input.int(20, "Displacement Avg Lookback", minval=5, maxval=100)
 
 // Alerts
 alertBullMSB         = input.bool(true, "Alert on Bullish MSB", group="Alerts")
@@ -140,25 +139,17 @@ if pivotHighConfirmed or pivotLowConfirmed
     needsPivotRedraw := true
 
 // ─────────────────────────────────────────────────────────────
-// DISPLACEMENT CALCULATION
-// ─────────────────────────────────────────────────────────────
-
-candleBody      = math.abs(close - open)
-avgBody         = ta.sma(candleBody, displacementLookback)
-hasDisplacement = not requireDisplacement or (candleBody >= avgBody * displacementMult)
-
-// ─────────────────────────────────────────────────────────────
 // MSB DETECTION (counter-trend only)
 // ─────────────────────────────────────────────────────────────
 
 bullMSB = false
 if not na(lastPivotHigh) and (trend <= 0)
-    if close > lastPivotHigh and close[1] <= lastPivotHigh and hasDisplacement
+    if close > lastPivotHigh and close[1] <= lastPivotHigh
         bullMSB := true
 
 bearMSB = false
 if not na(lastPivotLow) and (trend >= 0)
-    if close < lastPivotLow and close[1] >= lastPivotLow and hasDisplacement
+    if close < lastPivotLow and close[1] >= lastPivotLow
         bearMSB := true
 
 // ─────────────────────────────────────────────────────────────
@@ -224,7 +215,7 @@ if bullMSBValid
     activeMSBLine := line.new(
          x1=lastPivotHighBar, y1=lastPivotHigh,
          x2=bar_index, y2=lastPivotHigh,
-         color=BULL_COLOR, style=line.style_solid, width=2)
+         color=BULL_COLOR, style=line.style_solid, width=1)
 
     if not na(activePivotLine)
         line.set_x2(activePivotLine, bar_index)
@@ -243,7 +234,7 @@ if bearMSBValid
     activeMSBLine := line.new(
          x1=lastPivotLowBar, y1=lastPivotLow,
          x2=bar_index, y2=lastPivotLow,
-         color=BEAR_COLOR, style=line.style_solid, width=2)
+         color=BEAR_COLOR, style=line.style_solid, width=1)
 
     if not na(activePivotLine)
         line.set_x2(activePivotLine, bar_index)
