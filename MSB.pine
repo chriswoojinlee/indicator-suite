@@ -1,0 +1,209 @@
+//@version=6
+indicator("MSB", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=200)
+
+// ─────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────
+
+// Pivot Detection
+pivotLen             = input.int(5, "Pivot Lookback Length", minval=2, maxval=50, tooltip="Number of bars left/right to confirm a swing pivot. Higher = fewer, more significant pivots.")
+pivotSource          = input.string("Close", "Pivot Source", options=["Close", "Wick"], tooltip="Close: uses candle body closes for pivot detection. Wick: uses high/low wicks.")
+
+// MSB Validation
+requireDisplacement  = input.bool(true, "Require Displacement", tooltip="MSB candle must show momentum (body > avg body * multiplier) to confirm the break.")
+displacementMult     = input.float(1.0, "Displacement Body Multiplier", minval=0.5, maxval=5.0, step=0.1, tooltip="MSB candle body must be >= this multiple of the average body size.")
+displacementLookback = input.int(20, "Displacement Avg Lookback", minval=5, maxval=100)
+
+// Alerts
+alertBullMSB         = input.bool(true, "Alert on Bullish MSB", group="Alerts")
+alertBearMSB         = input.bool(true, "Alert on Bearish MSB", group="Alerts")
+
+// ─────────────────────────────────────────────────────────────
+// COLORS (constants, not inputs — Style tab controls these)
+// ─────────────────────────────────────────────────────────────
+
+color BULL_COLOR       = color.green
+color BEAR_COLOR       = color.red
+color BULL_LABEL_COLOR = color.green
+color BEAR_LABEL_COLOR = color.red
+
+// ─────────────────────────────────────────────────────────────
+// PIVOT DETECTION
+// ─────────────────────────────────────────────────────────────
+
+pivotHighVal = pivotSource == "Close" ? close : high
+pivotLowVal  = pivotSource == "Close" ? close : low
+
+phVal = ta.pivothigh(pivotHighVal, pivotLen, pivotLen)
+plVal = ta.pivotlow(pivotLowVal, pivotLen, pivotLen)
+
+var float lastPivotHigh    = na
+var int   lastPivotHighBar = na
+var float lastPivotLow     = na
+var int   lastPivotLowBar  = na
+
+// ─────────────────────────────────────────────────────────────
+// TREND STATE
+// ─────────────────────────────────────────────────────────────
+// +1 = bullish (last MSB broke pivot high upward)
+// -1 = bearish (last MSB broke pivot low downward)
+//  0 = undefined (no MSB yet — both sides active)
+
+var int trend = 0
+
+// ─────────────────────────────────────────────────────────────
+// SINGLE ACTIVE PIVOT LINE
+// ─────────────────────────────────────────────────────────────
+
+var line activePivotLine = na
+needsPivotRedraw = false
+
+// ─────────────────────────────────────────────────────────────
+// UPDATE PIVOTS
+// ─────────────────────────────────────────────────────────────
+
+pivotUpdated = false
+
+if not na(phVal)
+    lastPivotHigh    := phVal
+    lastPivotHighBar := bar_index - pivotLen
+    pivotUpdated     := true
+
+if not na(plVal)
+    lastPivotLow    := plVal
+    lastPivotLowBar := bar_index - pivotLen
+    pivotUpdated    := true
+
+if pivotUpdated
+    needsPivotRedraw := true
+
+// ─────────────────────────────────────────────────────────────
+// DISPLACEMENT CALCULATION
+// ─────────────────────────────────────────────────────────────
+
+candleBody      = math.abs(close - open)
+avgBody         = ta.sma(candleBody, displacementLookback)
+hasDisplacement = not requireDisplacement or (candleBody >= avgBody * displacementMult)
+
+// ─────────────────────────────────────────────────────────────
+// MSB DETECTION (counter-trend only)
+// ─────────────────────────────────────────────────────────────
+
+bullMSB = false
+if not na(lastPivotHigh) and (trend <= 0)
+    if close > lastPivotHigh and close[1] <= lastPivotHigh and hasDisplacement
+        bullMSB := true
+
+bearMSB = false
+if not na(lastPivotLow) and (trend >= 0)
+    if close < lastPivotLow and close[1] >= lastPivotLow and hasDisplacement
+        bearMSB := true
+
+// ─────────────────────────────────────────────────────────────
+// DEDUPLICATION
+// ─────────────────────────────────────────────────────────────
+
+var float lastBullMSBLevel = na
+var float lastBearMSBLevel = na
+
+bullMSBValid = bullMSB and (na(lastBullMSBLevel) or lastPivotHigh != lastBullMSBLevel or trend <= 0)
+bearMSBValid = bearMSB and (na(lastBearMSBLevel) or lastPivotLow != lastBearMSBLevel or trend >= 0)
+
+// ─────────────────────────────────────────────────────────────
+// TREND FLIP + STATE UPDATE
+// ─────────────────────────────────────────────────────────────
+
+if bullMSBValid
+    trend            := 1
+    lastBullMSBLevel := lastPivotHigh
+    needsPivotRedraw := true
+
+if bearMSBValid
+    trend            := -1
+    lastBearMSBLevel := lastPivotLow
+    needsPivotRedraw := true
+
+// ─────────────────────────────────────────────────────────────
+// REDRAW ACTIVE PIVOT LINE
+// ─────────────────────────────────────────────────────────────
+// Bullish trend → pivot low line colored RED (bearish break level)
+// Bearish trend → pivot high line colored GREEN (bullish reclaim level)
+
+if needsPivotRedraw
+    if not na(activePivotLine)
+        line.delete(activePivotLine)
+    if trend >= 0 and not na(lastPivotLow)
+        activePivotLine := line.new(
+             x1=lastPivotLowBar, y1=lastPivotLow,
+             x2=bar_index, y2=lastPivotLow,
+             color=BEAR_COLOR, style=line.style_dashed, width=1, extend=extend.right)
+    if trend < 0 and not na(lastPivotHigh)
+        activePivotLine := line.new(
+             x1=lastPivotHighBar, y1=lastPivotHigh,
+             x2=bar_index, y2=lastPivotHigh,
+             color=BULL_COLOR, style=line.style_dashed, width=1, extend=extend.right)
+
+// ─────────────────────────────────────────────────────────────
+// VISUAL: SINGLE MSB ON CHART
+// ─────────────────────────────────────────────────────────────
+// Only one MSB ever visible. New MSB deletes previous regardless of side.
+// Labels use full opacity so they render clearly over candles.
+
+var label activeMSBLabel = na
+var line  activeMSBLine  = na
+
+if bullMSBValid
+    if not na(activeMSBLabel)
+        label.delete(activeMSBLabel)
+    if not na(activeMSBLine)
+        line.delete(activeMSBLine)
+
+    activeMSBLabel := label.new(
+         x=bar_index, y=low,
+         text="MSB", style=label.style_label_up,
+         color=BULL_LABEL_COLOR, textcolor=color.white, size=size.small)
+
+    activeMSBLine := line.new(
+         x1=lastPivotHighBar, y1=lastPivotHigh,
+         x2=bar_index, y2=lastPivotHigh,
+         color=BULL_COLOR, style=line.style_solid, width=2)
+
+    if not na(activePivotLine)
+        line.set_x2(activePivotLine, bar_index)
+
+if bearMSBValid
+    if not na(activeMSBLabel)
+        label.delete(activeMSBLabel)
+    if not na(activeMSBLine)
+        line.delete(activeMSBLine)
+
+    activeMSBLabel := label.new(
+         x=bar_index, y=high,
+         text="MSB", style=label.style_label_down,
+         color=BEAR_LABEL_COLOR, textcolor=color.white, size=size.small)
+
+    activeMSBLine := line.new(
+         x1=lastPivotLowBar, y1=lastPivotLow,
+         x2=bar_index, y2=lastPivotLow,
+         color=BEAR_COLOR, style=line.style_solid, width=2)
+
+    if not na(activePivotLine)
+        line.set_x2(activePivotLine, bar_index)
+
+// ─────────────────────────────────────────────────────────────
+// PLOTS (all hidden from status line)
+// ─────────────────────────────────────────────────────────────
+
+plot(lastPivotHigh, "Last Pivot High", color=color.new(color.white, 100), display=display.data_window)
+plot(lastPivotLow, "Last Pivot Low", color=color.new(color.white, 100), display=display.data_window)
+plot(bullMSBValid ? 1 : 0, "Bull MSB Signal", color=color.new(color.white, 100), display=display.data_window)
+plot(bearMSBValid ? 1 : 0, "Bear MSB Signal", color=color.new(color.white, 100), display=display.data_window)
+plot(trend, "Trend State", color=color.new(color.white, 100), display=display.data_window)
+
+// ─────────────────────────────────────────────────────────────
+// ALERTS
+// ─────────────────────────────────────────────────────────────
+
+alertcondition(bullMSBValid and alertBullMSB, title="Bullish MSB", message="Bullish MSB: Trend flipped bullish — close broke above pivot high on {{ticker}} {{interval}}")
+alertcondition(bearMSBValid and alertBearMSB, title="Bearish MSB", message="Bearish MSB: Trend flipped bearish — close broke below pivot low on {{ticker}} {{interval}}")
+alertcondition((bullMSBValid and alertBullMSB) or (bearMSBValid and alertBearMSB), title="Any MSB", message="MSB trend flip on {{ticker}} {{interval}} — Check chart")
