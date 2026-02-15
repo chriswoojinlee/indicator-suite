@@ -1,0 +1,265 @@
+// This Pine Script™ source code is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+
+//@version=6
+indicator("Weekend Extreme Retest", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// When price on BTC forms an extreme on a weekend, such that it is higher or lower than all four previous weekdays
+// before it, price will often sweep that extreme, and this can sometimes offer a better entry to fade price
+//
+// Stats (over sample size of 104 occurances):
+// 
+// Sweep rate by days from weekend extreme formation:
+// - Day 1: 28%
+// - Day 2: 38.5%
+// - Day 3: 46.2%
+// - Day 4: 52.9%
+// - Day 5+: odds do not improve statistically significantly
+//
+// Within 1 day of weekend extreme formation, that level will be swept roughly a quarter of the time, and
+// within 4 days of weekend extreme formation, that level will be swept roughly half of the time;
+// beyond 4 days, the level loses significance and there is no edge to be sought after there
+
+// ─────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────
+
+string GRP_STYLE = "Style"
+string GRP_ALERT = "Alerts"
+
+highColor  = input.color(color.new(color.red, 30), "High Color", group=GRP_STYLE, display=display.none)
+lowColor   = input.color(color.new(color.green, 30), "Low Color", group=GRP_STYLE, display=display.none)
+lineWidth  = input.int(1, "Line Width", minval=1, maxval=4, group=GRP_STYLE, display=display.none)
+lineStyle  = input.string("Dashed", "Line Style", options=["Solid", "Dashed", "Dotted"], group=GRP_STYLE, display=display.none)
+showLabels = input.bool(true, "Show Labels", group=GRP_STYLE, display=display.none)
+
+alertOnSweep = input.bool(true, "Alert On Sweep", group=GRP_ALERT, display=display.none)
+
+// ─────────────────────────────────────────────────────────────
+// HARDCODED CORE SETTINGS
+// ─────────────────────────────────────────────────────────────
+
+maxLevels = 5
+
+// BTC only
+isBTC = str.contains(str.upper(syminfo.basecurrency), "BTC") or str.contains(str.upper(syminfo.ticker), "BTC")
+
+// ─────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────
+
+getLineStyle(string s) =>
+    switch s
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+isWeekend() =>
+    dow = dayofweek(time, "UTC")
+    dow == 7 or dow == 1
+
+// ─────────────────────────────────────────────────────────────
+// DAILY TRACKING (weekdays only)
+// ─────────────────────────────────────────────────────────────
+
+var float[] dailyHighs = array.new_float(0)
+var float[] dailyLows  = array.new_float(0)
+
+newDay = ta.change(time("D")) != 0
+
+var float curDayHigh = na
+var float curDayLow  = na
+
+if newDay and not isWeekend()
+    if not na(curDayHigh)
+        array.push(dailyHighs, curDayHigh)
+        array.push(dailyLows, curDayLow)
+        if array.size(dailyHighs) > 10
+            array.shift(dailyHighs)
+            array.shift(dailyLows)
+    curDayHigh := high
+    curDayLow  := low
+else if not isWeekend()
+    curDayHigh := na(curDayHigh) ? high : math.max(curDayHigh, high)
+    curDayLow  := na(curDayLow)  ? low  : math.min(curDayLow, low)
+
+// ─────────────────────────────────────────────────────────────
+// WEEKEND RANGE
+// ─────────────────────────────────────────────────────────────
+
+var bool  inWeekend       = false
+var float weekendHigh     = na
+var float weekendLow      = na
+var int   weekendHighTime = na
+var int   weekendLowTime  = na
+
+weekendNow = isWeekend()
+
+if weekendNow and not inWeekend
+    inWeekend       := true
+    weekendHigh     := high
+    weekendLow      := low
+    weekendHighTime := time
+    weekendLowTime  := time
+    // Store Friday before entering weekend
+    if not na(curDayHigh)
+        array.push(dailyHighs, curDayHigh)
+        array.push(dailyLows, curDayLow)
+        if array.size(dailyHighs) > 10
+            array.shift(dailyHighs)
+            array.shift(dailyLows)
+        curDayHigh := na
+        curDayLow  := na
+
+if weekendNow and inWeekend
+    if high > weekendHigh
+        weekendHigh     := high
+        weekendHighTime := time
+    if low < weekendLow
+        weekendLow      := low
+        weekendLowTime  := time
+
+// ─────────────────────────────────────────────────────────────
+// LEVEL STORAGE
+// ─────────────────────────────────────────────────────────────
+
+var float[] lvlPrice  = array.new_float(0)
+var int[]   lvlType   = array.new_int(0)     // 1 = high, -1 = low
+var int[]   lvlBar    = array.new_int(0)     // time of weekend bar that made the extreme
+var line[]  lvlLines  = array.new_line(0)
+var label[] lvlLabels = array.new_label(0)
+
+// ─────────────────────────────────────────────────────────────
+// WEEKEND EXIT → CREATE LEVELS
+// ─────────────────────────────────────────────────────────────
+
+if not weekendNow and inWeekend
+    inWeekend := false
+
+    if isBTC
+        // 4-day deviation filter: weekend extreme must exceed ALL
+        // daily extremes from the prior 4 weekdays.
+        int sz = array.size(dailyLows)
+        bool validHigh = false
+        bool validLow  = false
+
+        if sz >= 4
+            validHigh := true
+            for k = sz - 4 to sz - 1
+                if na(weekendHigh) or weekendHigh <= array.get(dailyHighs, k)
+                    validHigh := false
+                    break
+
+            validLow := true
+            for k = sz - 4 to sz - 1
+                if na(weekendLow) or weekendLow >= array.get(dailyLows, k)
+                    validLow := false
+                    break
+
+        if validLow and not na(weekendLow)
+            array.push(lvlPrice, weekendLow)
+            array.push(lvlType, -1)
+            array.push(lvlBar, weekendLowTime)
+            array.push(lvlLines, line(na))
+            array.push(lvlLabels, label(na))
+
+        if validHigh and not na(weekendHigh)
+            array.push(lvlPrice, weekendHigh)
+            array.push(lvlType, 1)
+            array.push(lvlBar, weekendHighTime)
+            array.push(lvlLines, line(na))
+            array.push(lvlLabels, label(na))
+
+    weekendHigh     := na
+    weekendLow      := na
+    weekendHighTime := na
+    weekendLowTime  := na
+
+// ─────────────────────────────────────────────────────────────
+// SWEEP CHECK, ALERTS & STALE EXPIRY
+// ─────────────────────────────────────────────────────────────
+
+// 5 days in milliseconds
+int staleMs = 5 * 86400000
+
+var bool sweepHighFired = false
+var bool sweepLowFired  = false
+sweepHighFired := false
+sweepLowFired  := false
+
+if array.size(lvlPrice) > 0
+    int sz = array.size(lvlPrice)
+    for j = sz - 1 to 0
+        float p       = array.get(lvlPrice, j)
+        int   t       = array.get(lvlType, j)
+        int   lvlTime = array.get(lvlBar, j)
+
+        bool swept = (t == 1 and high > p) or (t == -1 and low < p)
+        bool stale = (time - lvlTime) > staleMs
+
+        if swept
+            if t == 1
+                sweepHighFired := true
+            else
+                sweepLowFired := true
+
+        if swept or stale
+            line.delete(array.get(lvlLines, j))
+            label.delete(array.get(lvlLabels, j))
+            array.remove(lvlPrice, j)
+            array.remove(lvlType, j)
+            array.remove(lvlBar, j)
+            array.remove(lvlLines, j)
+            array.remove(lvlLabels, j)
+
+// Cap total levels
+while array.size(lvlPrice) > maxLevels
+    line.delete(array.get(lvlLines, 0))
+    label.delete(array.get(lvlLabels, 0))
+    array.shift(lvlPrice)
+    array.shift(lvlType)
+    array.shift(lvlBar)
+    array.shift(lvlLines)
+    array.shift(lvlLabels)
+
+// ─────────────────────────────────────────────────────────────
+// ALERTS
+// ─────────────────────────────────────────────────────────────
+
+if alertOnSweep and sweepHighFired
+    alert("Weekend High swept | " + syminfo.ticker + " | " + str.tostring(close, "#.##"), alert.freq_once_per_bar)
+
+if alertOnSweep and sweepLowFired
+    alert("Weekend Low swept | " + syminfo.ticker + " | " + str.tostring(close, "#.##"), alert.freq_once_per_bar)
+
+// ─────────────────────────────────────────────────────────────
+// DRAW / UPDATE LEVELS
+// ─────────────────────────────────────────────────────────────
+
+if array.size(lvlPrice) > 0
+    for j = 0 to array.size(lvlPrice) - 1
+        float p      = array.get(lvlPrice, j)
+        int   t      = array.get(lvlType, j)
+        int   startB = array.get(lvlBar, j)
+
+        color col = t == 1 ? highColor : lowColor
+
+        line.delete(array.get(lvlLines, j))
+        label.delete(array.get(lvlLabels, j))
+
+        array.set(lvlLines, j, line.new(
+             startB, p, startB + 86400000, p,
+             color=col, width=lineWidth,
+             style=getLineStyle(lineStyle),
+             extend=extend.right,
+             xloc=xloc.bar_time))
+
+        if showLabels
+            string side = t == 1 ? "Weekend High" : "Weekend Low"
+            lblStyle = t == 1 ? label.style_label_lower_left : label.style_label_upper_left
+
+            array.set(lvlLabels, j, label.new(
+                 startB, p, side,
+                 color=color.new(color.black, 100), textcolor=col,
+                 style=lblStyle, size=size.small,
+                 xloc=xloc.bar_time))
