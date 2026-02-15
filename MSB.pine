@@ -5,13 +5,14 @@ indicator("MSB", overlay=true, max_lines_count=500, max_labels_count=500, max_bo
 // INPUTS
 // ─────────────────────────────────────────────────────────────
 
-// Pivot Detection
-pivotLen             = input.int(5, "Pivot Lookback Length", minval=2, maxval=50, tooltip="Number of bars left/right to confirm a swing pivot. Higher = fewer, more significant pivots.")
+// ATR-Adaptive Pivot Detection
+atrLen               = input.int(14, "ATR Length", minval=5, maxval=50, tooltip="Period for ATR calculation used in pivot confirmation.")
+atrConfirmMult       = input.float(0.75, "ATR Confirmation Multiplier", minval=0.1, maxval=3.0, step=0.05, tooltip="Price must move this many ATRs away from a candidate swing to confirm it as a pivot. Lower = faster confirmation (more pivots, earlier signals). Higher = slower confirmation (fewer pivots, later but cleaner signals).")
 pivotSource          = input.string("Close", "Pivot Source", options=["Close", "Wick"], tooltip="Close: uses candle body closes for pivot detection. Wick: uses high/low wicks.")
 
 // MSB Validation
 requireDisplacement  = input.bool(true, "Require Displacement", tooltip="MSB candle must show momentum (body > avg body * multiplier) to confirm the break.")
-displacementMult     = input.float(1.0, "Displacement Body Multiplier", minval=0.5, maxval=5.0, step=0.1, tooltip="MSB candle body must be >= this multiple of the average body size.")
+displacementMult     = input.float(1.25, "Displacement Body Multiplier", minval=0.5, maxval=5.0, step=0.1, tooltip="MSB candle body must be >= this multiple of the average body size.")
 displacementLookback = input.int(20, "Displacement Avg Lookback", minval=5, maxval=100)
 
 // Alerts
@@ -19,7 +20,7 @@ alertBullMSB         = input.bool(true, "Alert on Bullish MSB", group="Alerts")
 alertBearMSB         = input.bool(true, "Alert on Bearish MSB", group="Alerts")
 
 // ─────────────────────────────────────────────────────────────
-// COLORS (constants, not inputs — Style tab controls these)
+// COLORS
 // ─────────────────────────────────────────────────────────────
 
 color BULL_COLOR       = color.green
@@ -28,26 +29,103 @@ color BULL_LABEL_COLOR = color.green
 color BEAR_LABEL_COLOR = color.red
 
 // ─────────────────────────────────────────────────────────────
-// PIVOT DETECTION
+// ATR CALCULATION
 // ─────────────────────────────────────────────────────────────
 
-pivotHighVal = pivotSource == "Close" ? close : high
-pivotLowVal  = pivotSource == "Close" ? close : low
+atrValue = ta.atr(atrLen)
 
-phVal = ta.pivothigh(pivotHighVal, pivotLen, pivotLen)
-plVal = ta.pivotlow(pivotLowVal, pivotLen, pivotLen)
+// ─────────────────────────────────────────────────────────────
+// ATR-ADAPTIVE PIVOT DETECTION
+// ─────────────────────────────────────────────────────────────
+// Instead of fixed N-bar lookback, we track candidate swing
+// highs/lows and confirm them when price retreats by ATR * mult.
+//
+// Candidate swing high: the highest close (or wick) seen during
+// the current upward move. It stays a candidate until price
+// closes ATR * mult below it, at which point it becomes a
+// confirmed pivot high.
+//
+// This means:
+//   - Sharp reversals confirm pivots in 1-2 bars
+//   - Slow grinds take longer to confirm
+//   - Volatile assets auto-adjust via ATR scaling
+//   - No fixed delay baked in
 
-var float lastPivotHigh    = na
-var int   lastPivotHighBar = na
-var float lastPivotLow     = na
-var int   lastPivotLowBar  = na
+// Source values
+srcHigh = pivotSource == "Close" ? close : high
+srcLow  = pivotSource == "Close" ? close : low
+
+// Candidate tracking
+var float candidateHigh      = na
+var int   candidateHighBar   = na
+var float candidateLow       = na
+var int   candidateLowBar    = na
+
+// Confirmed pivots
+var float lastPivotHigh      = na
+var int   lastPivotHighBar   = na
+var float lastPivotLow       = na
+var int   lastPivotLowBar    = na
+
+// Swing direction tracker
+// 1 = currently in upswing (tracking candidate high)
+// -1 = currently in downswing (tracking candidate low)
+var int swingDir = 0
+
+pivotHighConfirmed = false
+pivotLowConfirmed  = false
+
+// ATR threshold for confirmation
+atrThresh = atrValue * atrConfirmMult
+
+if bar_index > atrLen
+    // ── UPSWING: tracking candidate high ──
+    if swingDir >= 0
+        // Update candidate high if price makes new high
+        if na(candidateHigh) or srcHigh > candidateHigh
+            candidateHigh    := srcHigh
+            candidateHighBar := bar_index
+
+        // Check if price has retreated enough to confirm the candidate
+        dropFromHigh = candidateHigh - srcLow
+        if dropFromHigh >= atrThresh and not na(candidateHigh)
+            // Confirm pivot high
+            lastPivotHigh      := candidateHigh
+            lastPivotHighBar   := candidateHighBar
+            pivotHighConfirmed := true
+
+            // Switch to downswing, seed candidate low with current bar
+            swingDir         := -1
+            candidateLow     := srcLow
+            candidateLowBar  := bar_index
+            candidateHigh    := na
+            candidateHighBar := na
+
+    // ── DOWNSWING: tracking candidate low ──
+    if swingDir == -1 and not pivotHighConfirmed
+        // Update candidate low if price makes new low
+        if na(candidateLow) or srcLow < candidateLow
+            candidateLow    := srcLow
+            candidateLowBar := bar_index
+
+        // Check if price has rallied enough to confirm the candidate
+        riseFromLow = srcHigh - candidateLow
+        if riseFromLow >= atrThresh and not na(candidateLow)
+            // Confirm pivot low
+            lastPivotLow      := candidateLow
+            lastPivotLowBar   := candidateLowBar
+            pivotLowConfirmed := true
+
+            // Switch to upswing, seed candidate high with current bar
+            swingDir         := 1
+            candidateHigh    := srcHigh
+            candidateHighBar := bar_index
+            candidateLow     := na
+            candidateLowBar  := na
 
 // ─────────────────────────────────────────────────────────────
 // TREND STATE
 // ─────────────────────────────────────────────────────────────
-// +1 = bullish (last MSB broke pivot high upward)
-// -1 = bearish (last MSB broke pivot low downward)
-//  0 = undefined (no MSB yet — both sides active)
 
 var int trend = 0
 
@@ -58,23 +136,7 @@ var int trend = 0
 var line activePivotLine = na
 needsPivotRedraw = false
 
-// ─────────────────────────────────────────────────────────────
-// UPDATE PIVOTS
-// ─────────────────────────────────────────────────────────────
-
-pivotUpdated = false
-
-if not na(phVal)
-    lastPivotHigh    := phVal
-    lastPivotHighBar := bar_index - pivotLen
-    pivotUpdated     := true
-
-if not na(plVal)
-    lastPivotLow    := plVal
-    lastPivotLowBar := bar_index - pivotLen
-    pivotUpdated    := true
-
-if pivotUpdated
+if pivotHighConfirmed or pivotLowConfirmed
     needsPivotRedraw := true
 
 // ─────────────────────────────────────────────────────────────
@@ -126,8 +188,6 @@ if bearMSBValid
 // ─────────────────────────────────────────────────────────────
 // REDRAW ACTIVE PIVOT LINE
 // ─────────────────────────────────────────────────────────────
-// Bullish trend → pivot low line colored RED (bearish break level)
-// Bearish trend → pivot high line colored GREEN (bullish reclaim level)
 
 if needsPivotRedraw
     if not na(activePivotLine)
@@ -146,8 +206,6 @@ if needsPivotRedraw
 // ─────────────────────────────────────────────────────────────
 // VISUAL: SINGLE MSB ON CHART
 // ─────────────────────────────────────────────────────────────
-// Only one MSB ever visible. New MSB deletes previous regardless of side.
-// Labels use full opacity so they render clearly over candles.
 
 var label activeMSBLabel = na
 var line  activeMSBLine  = na
