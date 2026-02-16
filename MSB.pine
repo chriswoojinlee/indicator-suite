@@ -282,6 +282,6 @@ plot(trend, "Trend State", color=color.new(color.white, 100), display=display.da
 // ALERTS
 // ─────────────────────────────────────────────────────────────
 
-alertcondition(bullMSBValid and alertBullMSB, title="Bullish MSB", message="Bullish MSB: Trend flipped bullish on {{ticker}} {{interval}}")
-alertcondition(bearMSBValid and alertBearMSB, title="Bearish MSB", message="Bearish MSB: Trend flipped bearish on {{ticker}} {{interval}}")
-alertcondition((bullMSBValid and alertBullMSB) or (bearMSBValid and alertBearMSB), title="Any MSB", message="MSB trend flip on {{ticker}} {{interval}}")
+alertcondition(bullMSBValid and alertBullMSB and barstate.isconfirmed, title="Bullish MSB", message="Bullish MSB: Trend flipped bullish on {{ticker}} {{interval}}")
+alertcondition(bearMSBValid and alertBearMSB and barstate.isconfirmed, title="Bearish MSB", message="Bearish MSB: Trend flipped bearish on {{ticker}} {{interval}}")
+alertcondition((bullMSBValid and alertBullMSB or bearMSBValid and alertBearMSB) and barstate.isconfirmed, title="Any MSB", message="MSB trend flip on {{ticker}} {{interval}}")
