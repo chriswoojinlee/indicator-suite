@@ -27,8 +27,8 @@ indicator("Weekend Extreme Retest", overlay=true, max_lines_count=500, max_label
 string GRP_STYLE = "Style"
 string GRP_ALERT = "Alerts"
 
-highColor  = input.color(color.new(color.red, 30), "High Color", group=GRP_STYLE, display=display.none)
-lowColor   = input.color(color.new(color.green, 30), "Low Color", group=GRP_STYLE, display=display.none)
+highColor  = input.color(color.new(color.red, 0), "High Color", group=GRP_STYLE, display=display.none)
+lowColor   = input.color(color.new(color.green, 0), "Low Color", group=GRP_STYLE, display=display.none)
 lineWidth  = input.int(1, "Line Width", minval=1, maxval=4, group=GRP_STYLE, display=display.none)
 lineStyle  = input.string("Dashed", "Line Style", options=["Solid", "Dashed", "Dotted"], group=GRP_STYLE, display=display.none)
 showLabels = input.bool(true, "Show Labels", group=GRP_STYLE, display=display.none)
@@ -261,5 +261,5 @@ if array.size(lvlPrice) > 0
             array.set(lvlLabels, j, label.new(
                  startB, p, side,
                  color=color.new(color.black, 100), textcolor=col,
-                 style=lblStyle, size=size.small,
+                 style=lblStyle, size=size.normal,
                  xloc=xloc.bar_time))
