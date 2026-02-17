@@ -1,13 +1,11 @@
 //@version=6
-indicator(title="VWAP", shorttitle="VWAP", overlay=true, timeframe="", timeframe_gaps=true)
+indicator(title="VWAP", shorttitle="VWAP", overlay=true, max_lines_count=500, max_labels_count=100)
 
 // ———————————————————— Exchange Data {
 
-// Extract base symbol from current chart
 rawTicker = syminfo.ticker
 baseSymbol = str.replace(str.replace(str.replace(str.replace(str.replace(rawTicker, "USDT", ""), "USDC", ""), "USD", ""), "PERP", ""), ".P", "")
 
-// Fetch all exchange data
 [bsPrice, bsVol] = request.security("BINANCE:" + baseSymbol + "USDT", timeframe.period, [hlc3, volume], ignore_invalid_symbol=true)
 [cbPrice, cbVol] = request.security("COINBASE:" + baseSymbol + "USD", timeframe.period, [hlc3, volume], ignore_invalid_symbol=true)
 [krPrice, krVol] = request.security("KRAKEN:" + baseSymbol + "USD", timeframe.period, [hlc3, volume], ignore_invalid_symbol=true)
@@ -15,7 +13,6 @@ baseSymbol = str.replace(str.replace(str.replace(str.replace(str.replace(rawTick
 [byPrice, byVol] = request.security("BYBIT:" + baseSymbol + "USDT.P", timeframe.period, [hlc3, volume], ignore_invalid_symbol=true)
 [okPrice, okVol] = request.security("OKX:" + baseSymbol + "USDT.P", timeframe.period, [hlc3, volume], ignore_invalid_symbol=true)
 
-// Aggregate
 totalVol = nz(bsVol) + nz(cbVol) + nz(krVol) + nz(bpVol) + nz(byVol) + nz(okVol)
 totalPV = nz(bsPrice * bsVol) + nz(cbPrice * cbVol) + nz(krPrice * krVol) + 
           nz(bpPrice * bpVol) + nz(byPrice * byVol) + nz(okPrice * okVol)
@@ -24,7 +21,6 @@ combinedPrice = totalVol > 0 ? totalPV / totalVol : hlc3
 
 // ———————————————————— Inputs {
 
-// Anchor settings
 autoAnchor = timeframe.in_seconds() < 3600 ? "Week" : timeframe.in_seconds() <= 14400 ? "Month" : timeframe.in_seconds() <= 43200 ? "Quarter" : "Year"
 
 var anchor = input.string(defval = "Auto", title="Anchor Period",
@@ -32,7 +28,6 @@ var anchor = input.string(defval = "Auto", title="Anchor Period",
 
 actualAnchor = anchor == "Auto" ? autoAnchor : anchor
 
-// Bands settings
 BANDS_GROUP = "Bands Settings"
 showBand_1 = input.bool(true, "Band 1", group = BANDS_GROUP, display = display.none)
 showBand_2 = input.bool(false, "Band 2", group = BANDS_GROUP, display = display.none)
@@ -40,7 +35,6 @@ showBand_3 = input.bool(false, "Band 3", group = BANDS_GROUP, display = display.
 bandLineColor = input.color(color.new(color.white, 100), "Line", inline = "bandcolor", group = BANDS_GROUP, display = display.none)
 bandFillColor = input.color(color.new(color.white, 85), "Fill", inline = "bandcolor", group = BANDS_GROUP, display = display.none)
 
-// Previous period settings
 PREV_GROUP = "Previous Period Settings"
 showPrevPeriod = input.bool(true, "Show Previous VWAP", group = PREV_GROUP, display = display.none)
 showPrevBand_1 = input.bool(true, "Band 1", group = PREV_GROUP, display = display.none)
@@ -48,6 +42,10 @@ showPrevBand_2 = input.bool(false, "Band 2", group = PREV_GROUP, display = displ
 showPrevBand_3 = input.bool(false, "Band 3", group = PREV_GROUP, display = display.none)
 prevBandLineColor = input.color(color.new(color.white, 100), "Line", inline = "pbandcolor", group = PREV_GROUP, display = display.none)
 prevBandFillColor = input.color(color.new(color.white, 85), "Fill", inline = "pbandcolor", group = PREV_GROUP, display = display.none)
+
+// Historical extended periods
+HIST_GROUP = "Historical Periods"
+histPeriods      = input.int(0, "Number of Extended Periods", minval=0, maxval=5, group=HIST_GROUP, display=display.none, tooltip="How many older VWAP periods to extend forward. 0 = disabled. Uses the same style settings as Previous Period.")
 
 // ———————————————————— Period Detection {
 
@@ -78,7 +76,6 @@ if na(combinedPrice[1]) and not isEsdAnchor
 float vwapValue = _vwap
 float stdevAbs = _stdevUpper - _vwap
 
-// Calculate band values (standard deviation mode, fixed multipliers)
 float upperBand1 = _vwap + stdevAbs
 float lowerBand1 = _vwap - stdevAbs
 float upperBand2 = _vwap + stdevAbs * 2
@@ -93,8 +90,49 @@ var float prevUpper1 = na, var float prevLower1 = na
 var float prevUpper2 = na, var float prevLower2 = na
 var float prevUpper3 = na, var float prevLower3 = na
 
+// ———————————————————— Historical Period Storage {
+// Arrays store values from oldest [0] to most recent [size-1].
+// On each new period, we push the outgoing "previous" values
+// into history before overwriting them with current values.
+
+var array<float> histVwapArr   = array.new_float()
+var array<float> histUpper1Arr = array.new_float()
+var array<float> histLower1Arr = array.new_float()
+var array<float> histUpper2Arr = array.new_float()
+var array<float> histLower2Arr = array.new_float()
+var array<float> histUpper3Arr = array.new_float()
+var array<float> histLower3Arr = array.new_float()
+var array<int>   histBarArr    = array.new_int()
+
+// Line/fill arrays for cleanup
+var array<line>     histLines = array.new_line()
+var array<linefill> histFills = array.new_linefill()
+
 if isNewPeriod and not na(vwapValue[1])
-    prevVwap := vwapValue[1]
+    // Push outgoing previous period into history (if it exists)
+    if not na(prevVwap) and histPeriods > 0
+        array.push(histVwapArr,   prevVwap)
+        array.push(histUpper1Arr, prevUpper1)
+        array.push(histLower1Arr, prevLower1)
+        array.push(histUpper2Arr, prevUpper2)
+        array.push(histLower2Arr, prevLower2)
+        array.push(histUpper3Arr, prevUpper3)
+        array.push(histLower3Arr, prevLower3)
+        array.push(histBarArr,    bar_index)
+
+        // Trim to max history depth
+        while array.size(histVwapArr) > histPeriods
+            array.shift(histVwapArr)
+            array.shift(histUpper1Arr)
+            array.shift(histLower1Arr)
+            array.shift(histUpper2Arr)
+            array.shift(histLower2Arr)
+            array.shift(histUpper3Arr)
+            array.shift(histLower3Arr)
+            array.shift(histBarArr)
+
+    // Now store current period end as new "previous"
+    prevVwap   := vwapValue[1]
     prevUpper1 := upperBand1[1]
     prevLower1 := lowerBand1[1]
     prevUpper2 := upperBand2[1]
@@ -102,22 +140,90 @@ if isNewPeriod and not na(vwapValue[1])
     prevUpper3 := upperBand3[1]
     prevLower3 := lowerBand3[1]
 
+// ———————————————————— Draw Historical Extensions {
+// Redrawn on last bar only for performance.
+// Each historical VWAP is a horizontal line extending right.
+// Band fills use linefill between upper/lower band lines.
+
+if barstate.islast and histPeriods > 0
+    // Clean up previous drawings
+    if array.size(histFills) > 0
+        for i = 0 to array.size(histFills) - 1
+            linefill.delete(array.get(histFills, i))
+        array.clear(histFills)
+    if array.size(histLines) > 0
+        for i = 0 to array.size(histLines) - 1
+            line.delete(array.get(histLines, i))
+        array.clear(histLines)
+
+    int sz = array.size(histVwapArr)
+    if sz > 0
+        for i = 0 to sz - 1
+            float hVwap = array.get(histVwapArr, i)
+            float hU1   = array.get(histUpper1Arr, i)
+            float hL1   = array.get(histLower1Arr, i)
+            float hU2   = array.get(histUpper2Arr, i)
+            float hL2   = array.get(histLower2Arr, i)
+            float hU3   = array.get(histUpper3Arr, i)
+            float hL3   = array.get(histLower3Arr, i)
+            int   hBar  = array.get(histBarArr, i)
+
+            // VWAP line
+            line vwapLine = line.new(hBar, hVwap, bar_index, hVwap, color=color.new(color.white, 25), style=line.style_dotted, width=2)
+            array.push(histLines, vwapLine)
+
+            // Band 1
+            if showPrevBand_1 and not na(hU1) and not na(hL1)
+                line u1Line = line.new(hBar, hU1, bar_index, hU1, color=prevBandLineColor)
+                line l1Line = line.new(hBar, hL1, bar_index, hL1, color=prevBandLineColor)
+                array.push(histLines, u1Line)
+                array.push(histLines, l1Line)
+                linefill f1 = linefill.new(u1Line, l1Line, prevBandFillColor)
+                array.push(histFills, f1)
+
+            // Band 2
+            if showPrevBand_2 and not na(hU2) and not na(hL2) and not na(hU1) and not na(hL1)
+                line u2Line = line.new(hBar, hU2, bar_index, hU2, color=prevBandLineColor)
+                line l2Line = line.new(hBar, hL2, bar_index, hL2, color=prevBandLineColor)
+                line u1Ref = line.new(hBar, hU1, bar_index, hU1, color=prevBandLineColor)
+                line l1Ref = line.new(hBar, hL1, bar_index, hL1, color=prevBandLineColor)
+                array.push(histLines, u2Line)
+                array.push(histLines, l2Line)
+                array.push(histLines, u1Ref)
+                array.push(histLines, l1Ref)
+                linefill f2u = linefill.new(u2Line, u1Ref, prevBandFillColor)
+                linefill f2l = linefill.new(l1Ref, l2Line, prevBandFillColor)
+                array.push(histFills, f2u)
+                array.push(histFills, f2l)
+
+            // Band 3
+            if showPrevBand_3 and not na(hU3) and not na(hL3) and not na(hU2) and not na(hL2)
+                line u3Line = line.new(hBar, hU3, bar_index, hU3, color=prevBandLineColor)
+                line l3Line = line.new(hBar, hL3, bar_index, hL3, color=prevBandLineColor)
+                line u2Ref = line.new(hBar, hU2, bar_index, hU2, color=prevBandLineColor)
+                line l2Ref = line.new(hBar, hL2, bar_index, hL2, color=prevBandLineColor)
+                array.push(histLines, u3Line)
+                array.push(histLines, l3Line)
+                array.push(histLines, u2Ref)
+                array.push(histLines, l2Ref)
+                linefill f3u = linefill.new(u3Line, u2Ref, prevBandFillColor)
+                linefill f3l = linefill.new(l2Ref, l3Line, prevBandFillColor)
+                array.push(histFills, f3u)
+                array.push(histFills, f3l)
+
 // ———————————————————— Plots - Current Period {
 
 plot(vwapValue, title = "VWAP", color = color.new(color.white, 25), linewidth = 2)
 
-// Band 1
 p_upper1 = plot(showBand_1 ? upperBand1 : na, title="Upper Band 1", color = bandLineColor)
 p_lower1 = plot(showBand_1 ? lowerBand1 : na, title="Lower Band 1", color = bandLineColor)
 fill(p_upper1, p_lower1, title="Band 1 Fill", color = showBand_1 ? bandFillColor : na)
 
-// Band 2
 p_upper2 = plot(showBand_2 ? upperBand2 : na, title="Upper Band 2", color = bandLineColor)
 p_lower2 = plot(showBand_2 ? lowerBand2 : na, title="Lower Band 2", color = bandLineColor)
 fill(p_upper2, p_upper1, title="Band 2 Upper Fill", color = showBand_2 ? bandFillColor : na)
 fill(p_lower1, p_lower2, title="Band 2 Lower Fill", color = showBand_2 ? bandFillColor : na)
 
-// Band 3
 p_upper3 = plot(showBand_3 ? upperBand3 : na, title="Upper Band 3", color = bandLineColor)
 p_lower3 = plot(showBand_3 ? lowerBand3 : na, title="Lower Band 3", color = bandLineColor)
 fill(p_upper3, p_upper2, title="Band 3 Upper Fill", color = showBand_3 ? bandFillColor : na)
@@ -127,18 +233,15 @@ fill(p_lower2, p_lower3, title="Band 3 Lower Fill", color = showBand_3 ? bandFil
 
 plot(showPrevPeriod ? prevVwap : na, title = "Previous VWAP", color = color.new(color.white, 25), linewidth = 2)
 
-// Previous Band 1
 pp_upper1 = plot(showPrevPeriod and showPrevBand_1 ? prevUpper1 : na, title = "Prev Upper Band 1", color = prevBandLineColor)
 pp_lower1 = plot(showPrevPeriod and showPrevBand_1 ? prevLower1 : na, title = "Prev Lower Band 1", color = prevBandLineColor)
 fill(pp_upper1, pp_lower1, title = "Prev Band 1 Fill", color = showPrevPeriod and showPrevBand_1 ? prevBandFillColor : na)
 
-// Previous Band 2
 pp_upper2 = plot(showPrevPeriod and showPrevBand_2 ? prevUpper2 : na, title = "Prev Upper Band 2", color = prevBandLineColor)
 pp_lower2 = plot(showPrevPeriod and showPrevBand_2 ? prevLower2 : na, title = "Prev Lower Band 2", color = prevBandLineColor)
 fill(pp_upper2, pp_upper1, title = "Prev Band 2 Upper Fill", color = showPrevPeriod and showPrevBand_2 ? prevBandFillColor : na)
 fill(pp_lower1, pp_lower2, title = "Prev Band 2 Lower Fill", color = showPrevPeriod and showPrevBand_2 ? prevBandFillColor : na)
 
-// Previous Band 3
 pp_upper3 = plot(showPrevPeriod and showPrevBand_3 ? prevUpper3 : na, title = "Prev Upper Band 3", color = prevBandLineColor)
 pp_lower3 = plot(showPrevPeriod and showPrevBand_3 ? prevLower3 : na, title = "Prev Lower Band 3", color = prevBandLineColor)
 fill(pp_upper3, pp_upper2, title = "Prev Band 3 Upper Fill", color = showPrevPeriod and showPrevBand_3 ? prevBandFillColor : na)
