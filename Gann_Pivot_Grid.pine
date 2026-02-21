@@ -2,7 +2,7 @@
 // https://mozilla.org/MPL/2.0/
 
 //@version=6
-indicator("Gann", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("Gann Pivot Grid", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // ─────────────────────────────────────────────────────────────
 // INPUTS
