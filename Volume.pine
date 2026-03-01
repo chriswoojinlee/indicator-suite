@@ -15,6 +15,8 @@ pocWidth     = input.int(4, "", minval=1, maxval=4, group=P_GROUP, inline="poc",
 pocStyle     = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=P_GROUP, inline="poc", display=display.none)
 pocBuckets   = input.int(20, "POC Resolution", minval=5, maxval=50, group=P_GROUP, display=display.none,
      tooltip="Number of price buckets to divide each candle into for POC calculation. Higher = more precise but heavier.")
+pocMaxAge    = input.int(4, "nPOC Max Age (bars)", minval=1, maxval=50, group=P_GROUP, display=display.none,
+     tooltip="Naked POC lines that remain untouched for this many bars are automatically removed. Lines that get hit within this window stay on the chart.")
 
 C_GROUP = "Colors"
 upColor   = input.color(color.green, "Up", group=C_GROUP, inline="colors", display=display.none)
@@ -30,8 +32,8 @@ tfMinutes = timeframe.in_seconds() / 60
 
 emaLength = tfMinutes <= 30 ? 13 : tfMinutes <= 720 ? 21 : 34
 
-// POC only on 6H and below
-pocAllowed = showPOC and tfMinutes <= 360
+// POC only on 2H and below
+pocAllowed = showPOC and tfMinutes <= 120
 
 // ============================================================================
 // LTF DATA FOR POC
@@ -118,20 +120,29 @@ if isSpike and pocAllowed
          color=pocColor, width=pocWidth, style=getPocStyle())
     array.push(pocLines, newLine)
 
-// Extend or terminate POC lines on sweep
+// Extend, terminate on sweep, or expire stale nPOCs
 if array.size(pocPrices) > 0
     int i = array.size(pocPrices) - 1
     while i >= 0
         float lvl = array.get(pocPrices, i)
         line ln   = array.get(pocLines, i)
         int startBar = array.get(pocBars, i)
+        int age = bar_index - startBar
 
-        if bar_index > startBar and low <= lvl and high >= lvl
+        if age > 0 and low <= lvl and high >= lvl
+            // Swept — finalize line at current bar, stop tracking
             line.set_x2(ln, bar_index)
             array.remove(pocPrices, i)
             array.remove(pocBars, i)
             array.remove(pocLines, i)
+        else if age > pocMaxAge
+            // Stale nPOC — delete line entirely
+            line.delete(ln)
+            array.remove(pocPrices, i)
+            array.remove(pocBars, i)
+            array.remove(pocLines, i)
         else
+            // Still active — keep extending
             line.set_x2(ln, bar_index)
 
         i -= 1
