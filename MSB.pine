@@ -93,18 +93,6 @@ var int trend = 0
 // ─────────────────────────────────────────────────────────────
 // COUNTER-TREND PIVOT TRACKING
 // ─────────────────────────────────────────────────────────────
-// After an MSB fires, we need to track new pivots on the
-// counter-trend side and update the pivot line to the most
-// recent one. This is what makes the line actionable.
-//
-// Bearish trend: track each new confirmed pivot HIGH and
-//   update the line downward as lower highs form.
-// Bullish trend: track each new confirmed pivot LOW and
-//   update the line upward as higher lows form.
-//
-// These are the levels the MSB detection checks against,
-// so updating them also means the next MSB fires at the
-// structurally correct, most recent level.
 
 var float activePivotLevel    = na
 var int   activePivotBar      = na
@@ -112,28 +100,22 @@ var int   activePivotBar      = na
 var line  activePivotLine     = na
 needsPivotRedraw = false
 
-// Update counter-trend pivot when a new one confirms
 if trend > 0 and pivotLowConfirmed
-    // Bullish trend: new pivot low = updated bearish break level
     activePivotLevel := lastPivotLow
     activePivotBar   := lastPivotLowBar
     needsPivotRedraw := true
 
 if trend < 0 and pivotHighConfirmed
-    // Bearish trend: new pivot high = updated bullish reclaim level
     activePivotLevel := lastPivotHigh
     activePivotBar   := lastPivotHighBar
     needsPivotRedraw := true
 
-// Also update when any pivot confirms and trend is undefined
 if trend == 0 and (pivotHighConfirmed or pivotLowConfirmed)
     needsPivotRedraw := true
 
 // ─────────────────────────────────────────────────────────────
 // MSB DETECTION (counter-trend only)
 // ─────────────────────────────────────────────────────────────
-// Uses activePivotLevel when available (post-MSB tracking),
-// falls back to lastPivotHigh/Low for initial detection.
 
 bullMSB = false
 if trend <= 0
@@ -156,14 +138,12 @@ if trend >= 0
 var float lastBullMSBLevel = na
 var float lastBearMSBLevel = na
 
-// Get the level that was actually broken for dedup
 float bullBreakLevel = trend < 0 and not na(activePivotLevel) ? activePivotLevel : lastPivotHigh
 float bearBreakLevel = trend > 0 and not na(activePivotLevel) ? activePivotLevel : lastPivotLow
 
 bullMSBValid = bullMSB and (na(lastBullMSBLevel) or bullBreakLevel != lastBullMSBLevel or trend <= 0)
 bearMSBValid = bearMSB and (na(lastBearMSBLevel) or bearBreakLevel != lastBearMSBLevel or trend >= 0)
 
-// Store the actual broken level/bar for drawing
 var float msbBrokenLevel    = na
 var int   msbBrokenLevelBar = na
 
@@ -182,7 +162,6 @@ if bearMSBValid
 if bullMSBValid
     trend            := 1
     lastBullMSBLevel := bullBreakLevel
-    // Reset counter-trend tracking: now watching for pivot lows
     activePivotLevel := lastPivotLow
     activePivotBar   := lastPivotLowBar
     needsPivotRedraw := true
@@ -190,7 +169,6 @@ if bullMSBValid
 if bearMSBValid
     trend            := -1
     lastBearMSBLevel := bearBreakLevel
-    // Reset counter-trend tracking: now watching for pivot highs
     activePivotLevel := lastPivotHigh
     activePivotBar   := lastPivotHighBar
     needsPivotRedraw := true
@@ -204,23 +182,24 @@ if needsPivotRedraw
         line.delete(activePivotLine)
 
     if trend > 0 and not na(activePivotLevel)
-        // Bullish: show pivot low line (bearish break level) in RED
         activePivotLine := line.new(
              x1=activePivotBar, y1=activePivotLevel,
              x2=bar_index, y2=activePivotLevel,
-             color=BEAR_COLOR, style=line.style_dashed, width=1, extend=extend.right)
+             color=BEAR_COLOR, style=line.style_dashed, width=1)
     else if trend < 0 and not na(activePivotLevel)
-        // Bearish: show pivot high line (bullish reclaim level) in GREEN
         activePivotLine := line.new(
              x1=activePivotBar, y1=activePivotLevel,
              x2=bar_index, y2=activePivotLevel,
-             color=BULL_COLOR, style=line.style_dashed, width=1, extend=extend.right)
+             color=BULL_COLOR, style=line.style_dashed, width=1)
     else if trend == 0 and not na(lastPivotLow)
-        // Undefined: default to showing pivot low
         activePivotLine := line.new(
              x1=lastPivotLowBar, y1=lastPivotLow,
              x2=bar_index, y2=lastPivotLow,
-             color=BEAR_COLOR, style=line.style_dashed, width=1, extend=extend.right)
+             color=BEAR_COLOR, style=line.style_dashed, width=1)
+
+// Extend pivot line to current bar on every bar (not just on redraw)
+if not na(activePivotLine)
+    line.set_x2(activePivotLine, bar_index)
 
 // ─────────────────────────────────────────────────────────────
 // VISUAL: SINGLE MSB ON CHART
@@ -245,9 +224,6 @@ if bullMSBValid
          x2=bar_index, y2=msbBrokenLevel,
          color=BULL_COLOR, style=line.style_solid, width=1)
 
-    if not na(activePivotLine)
-        line.set_x2(activePivotLine, bar_index)
-
 if bearMSBValid
     if not na(activeMSBLabel)
         label.delete(activeMSBLabel)
@@ -263,9 +239,6 @@ if bearMSBValid
          x1=msbBrokenLevelBar, y1=msbBrokenLevel,
          x2=bar_index, y2=msbBrokenLevel,
          color=BEAR_COLOR, style=line.style_solid, width=1)
-
-    if not na(activePivotLine)
-        line.set_x2(activePivotLine, bar_index)
 
 // ─────────────────────────────────────────────────────────────
 // PLOTS (all hidden from status line)

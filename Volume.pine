@@ -15,7 +15,7 @@ pocWidth     = input.int(4, "", minval=1, maxval=4, group=P_GROUP, inline="poc",
 pocStyle     = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=P_GROUP, inline="poc", display=display.none)
 pocBuckets   = input.int(20, "POC Resolution", minval=5, maxval=50, group=P_GROUP, display=display.none,
      tooltip="Number of price buckets to divide each candle into for POC calculation. Higher = more precise but heavier.")
-pocMaxAge    = input.int(4, "nPOC Max Age (bars)", minval=1, maxval=50, group=P_GROUP, display=display.none,
+pocMaxAge    = input.int(3, "nPOC Max Age (bars)", minval=1, maxval=50, group=P_GROUP, display=display.none,
      tooltip="Naked POC lines that remain untouched for this many bars are automatically removed. Lines that get hit within this window stay on the chart.")
 
 C_GROUP = "Colors"
