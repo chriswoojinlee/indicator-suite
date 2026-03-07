@@ -1,5 +1,5 @@
 //@version=5
-indicator("CVD", shorttitle="CVD", overlay=false, max_bars_back=5000, max_labels_count=500, max_lines_count=500)
+indicator("CVD", shorttitle="CVD", overlay=false, precision=0, max_bars_back=5000, max_labels_count=500, max_lines_count=500)
 
 // Auto-adjust settings based on timeframe (Fibonacci sequence)
 is_minute = timeframe.in_seconds(timeframe.period) < 3600  // Less than 1 hour
@@ -163,44 +163,44 @@ Drawing() =>
 
     // Regular Bullish Divergence
     if Regular_Bullish_Divergence
-        BuLine := line.new(Low_Per_Bar, Low_Per_Hist, Low_Last_Bar, Low_Last_Hist, color=color.rgb(21, 151, 25), width=1)
+        BuLine := line.new(Low_Per_Bar, Low_Per_Hist, Low_Last_Bar, Low_Last_Hist, color=color.green, width=1)
         if Show_Label == 'Yes'
             BuLabel := label.new(Low_Last_Bar, Low_Last_Hist, get_label_text("reg_bull"), color=color.green, textcolor=color.white, size=size.small, style=label.style_label_up)
-        BuLine_OnChart := line.new(Low_Per_Bar, low[bar_index - Low_Per_Bar], Low_Last_Bar, low[bar_index - Low_Last_Bar], color=color.rgb(21, 151, 25), width=1, force_overlay=true)
+        BuLine_OnChart := line.new(Low_Per_Bar, low[bar_index - Low_Per_Bar], Low_Last_Bar, low[bar_index - Low_Last_Bar], color=color.green, width=1, force_overlay=true)
         if Show_Label == 'Yes'
             BuLabel_OnChart := label.new(Low_Last_Bar, low[bar_index - Low_Last_Bar], get_label_text("reg_bull"), color=color.green, textcolor=color.white, size=size.small, style=label.style_label_up, force_overlay=true)
 
     // Regular Bearish Divergence
     if Regular_Bearish_Divergence
-        BeLine := line.new(High_Per_Bar, High_Per_Hist, High_Last_Bar, High_Last_Hist, color=color.rgb(212, 44, 44), width=1)
+        BeLine := line.new(High_Per_Bar, High_Per_Hist, High_Last_Bar, High_Last_Hist, color=color.red, width=1)
         if Show_Label == 'Yes'
             BeLabel := label.new(High_Last_Bar, High_Last_Hist, get_label_text("reg_bear"), color=color.red, textcolor=color.white, size=size.small, style=label.style_label_down)
-        BeLine_OnChart := line.new(High_Per_Bar, high[bar_index - High_Per_Bar], High_Last_Bar, high[bar_index - High_Last_Bar], color=color.rgb(212, 44, 44), width=1, force_overlay=true)
+        BeLine_OnChart := line.new(High_Per_Bar, high[bar_index - High_Per_Bar], High_Last_Bar, high[bar_index - High_Last_Bar], color=color.red, width=1, force_overlay=true)
         if Show_Label == 'Yes'
             BeLabel_OnChart := label.new(High_Last_Bar, high[bar_index - High_Last_Bar], get_label_text("reg_bear"), color=color.red, textcolor=color.white, size=size.small, style=label.style_label_down, force_overlay=true)
 
     // Hidden Bullish Divergence
     if Hidden_Bullish_Divergence
-        HidBuLine := line.new(Low_Per_Bar, Low_Per_Hist, Low_Last_Bar, Low_Last_Hist, color=color.rgb(21, 151, 25), width=1, style=line.style_dashed)
+        HidBuLine := line.new(Low_Per_Bar, Low_Per_Hist, Low_Last_Bar, Low_Last_Hist, color=color.green, width=1, style=line.style_dashed)
         if Show_Label == 'Yes'
             HidBuLabel := label.new(Low_Last_Bar, Low_Last_Hist, get_label_text("hid_bull"), color=color.green, textcolor=color.white, size=size.tiny, style=label.style_label_up)
-        HidBuLine_OnChart := line.new(Low_Per_Bar, low[bar_index - Low_Per_Bar], Low_Last_Bar, low[bar_index - Low_Last_Bar], color=color.rgb(21, 151, 25), width=1, style=line.style_dashed, force_overlay=true)
+        HidBuLine_OnChart := line.new(Low_Per_Bar, low[bar_index - Low_Per_Bar], Low_Last_Bar, low[bar_index - Low_Last_Bar], color=color.green, width=1, style=line.style_dashed, force_overlay=true)
         if Show_Label == 'Yes'
             HidBuLabel_OnChart := label.new(Low_Last_Bar, low[bar_index - Low_Last_Bar], get_label_text("hid_bull"), color=color.green, textcolor=color.white, size=size.tiny, style=label.style_label_up, force_overlay=true)
 
     // Hidden Bearish Divergence
     if Hidden_Bearish_Divergence
-        HidBeLine := line.new(High_Per_Bar, High_Per_Hist, High_Last_Bar, High_Last_Hist, color=color.rgb(212, 44, 44), width=1, style=line.style_dashed)
+        HidBeLine := line.new(High_Per_Bar, High_Per_Hist, High_Last_Bar, High_Last_Hist, color=color.red, width=1, style=line.style_dashed)
         if Show_Label == 'Yes'
             HidBeLabel := label.new(High_Last_Bar, High_Last_Hist, get_label_text("hid_bear"), color=color.red, textcolor=color.white, size=size.tiny, style=label.style_label_down)
-        HidBeLine_OnChart := line.new(High_Per_Bar, high[bar_index - High_Per_Bar], High_Last_Bar, high[bar_index - High_Last_Bar], color=color.rgb(212, 44, 44), width=1, style=line.style_dashed, force_overlay=true)
+        HidBeLine_OnChart := line.new(High_Per_Bar, high[bar_index - High_Per_Bar], High_Last_Bar, high[bar_index - High_Last_Bar], color=color.red, width=1, style=line.style_dashed, force_overlay=true)
         if Show_Label == 'Yes'
             HidBeLabel_OnChart := label.new(High_Last_Bar, high[bar_index - High_Last_Bar], get_label_text("hid_bear"), color=color.red, textcolor=color.white, size=size.tiny, style=label.style_label_down, force_overlay=true)
 
 Hist_Color = if Hist > 0
-    color.rgb(76, 175, 79, 50)
+    color.green
 else if Hist < 0
-    color.rgb(255, 82, 82, 50)
+    color.red
 
 plot(Hist, 'Show Cumulative Vol Delta', color=Hist_Color, style=plot.style_columns)
 Drawing()
