@@ -24,14 +24,11 @@ incrementOverride = input.float(0.0, "Increment Override", minval=0.0, maxval=50
      tooltip="Override auto sqrt increment. 0 = automatic.")
 
 // --- Anchor Mode ---
-anchorMode = input.string("Rolling", "Anchor Mode", options=["Rolling", "Confirmed Pivots", "Manual"], group=GRP_ANCHOR, display=display.none,
-     tooltip="Rolling: recalculates every bar from lookback window (original behavior, causes level drift).\nConfirmed Pivots: locks range to last confirmed swing high/low (stable, updates only on structural breaks).\nManual: uses your specified high/low inputs (fully static).")
+anchorMode = input.string("Rolling", "Anchor Mode", options=["Rolling", "Manual"], group=GRP_ANCHOR, display=display.none,
+     tooltip="Rolling: recalculates every bar from lookback window (adaptive, some level drift).\nManual: uses your specified high/low inputs (fully static, requires your structural judgment).")
 
 lookbackBars = input.int(500, "Rolling Lookback Bars", minval=50, maxval=5000, group=GRP_ANCHOR, display=display.none,
      tooltip="Only used in Rolling mode. Bars used to detect the macro range.")
-
-pivotStrength = input.int(10, "Pivot Confirmation Bars", minval=3, maxval=50, group=GRP_ANCHOR, display=display.none,
-     tooltip="Only used in Confirmed Pivots mode. Number of bars left/right required to confirm a swing. Higher = more stable, slower to update.")
 
 manualHigh = input.float(0.0, "Manual Range High", minval=0.0, group=GRP_ANCHOR, display=display.none,
      tooltip="Only used in Manual mode. Set to the high of your structural range.")
@@ -107,62 +104,16 @@ getLevelDescription(int idx, int total, float price, float currentClose) =>
     desc
 
 // ─────────────────────────────────────────────────────────────
-// RANGE DETECTION — MODE-DEPENDENT
+// RANGE DETECTION
 // ─────────────────────────────────────────────────────────────
 
-// --- Rolling mode (original behavior) ---
-int safeLb          = math.max(1, math.min(lookbackBars, bar_index + 1))
-float rollingHigh   = ta.highest(high, safeLb)
-float rollingLow    = ta.lowest(low, safeLb)
+int safeLb        = math.max(1, math.min(lookbackBars, bar_index + 1))
+float rollingHigh = ta.highest(high, safeLb)
+float rollingLow  = ta.lowest(low, safeLb)
 
-// --- Confirmed Pivots mode ---
-// Detect confirmed swing pivots, lock range to last confirmed high/low
-float pivHigh = ta.pivothigh(high, pivotStrength, pivotStrength)
-float pivLow  = ta.pivotlow(low, pivotStrength, pivotStrength)
+float rangeHigh = anchorMode == "Manual" and manualHigh > 0 ? manualHigh : rollingHigh
+float rangeLow  = anchorMode == "Manual" and manualLow > 0  ? manualLow  : rollingLow
 
-var float lockedHigh = na
-var float lockedLow  = na
-
-// Update locked anchors only when a new confirmed pivot forms
-if not na(pivHigh)
-    if na(lockedHigh) or pivHigh > lockedHigh
-        lockedHigh := pivHigh
-    // If price has moved significantly below old high, allow reset to new structural high
-    // (prevents stale highs from years ago dominating the grid)
-    if not na(lockedLow) and pivHigh < lockedHigh and (lockedHigh - pivHigh) / lockedHigh > 0.5
-        lockedHigh := pivHigh
-
-if not na(pivLow)
-    if na(lockedLow) or pivLow < lockedLow
-        lockedLow := pivLow
-    if not na(lockedHigh) and pivLow > lockedLow and (pivLow - lockedLow) / lockedLow > 0.5
-        lockedLow := pivLow
-
-// Also reset if a new pivot exceeds the opposite extreme (structural break)
-if not na(pivHigh) and not na(lockedLow)
-    // New high confirmed — if the range has been fully traversed, 
-    // check if the low anchor is stale (more than 2x the range away from recent action)
-    float recentLow = ta.lowest(low, math.min(pivotStrength * 4, bar_index + 1))
-    if recentLow > lockedLow and (recentLow - lockedLow) / (lockedHigh - lockedLow) > 0.3
-        lockedLow := recentLow
-
-if not na(pivLow) and not na(lockedHigh)
-    float recentHigh = ta.highest(high, math.min(pivotStrength * 4, bar_index + 1))
-    if recentHigh < lockedHigh and (lockedHigh - recentHigh) / (lockedHigh - lockedLow) > 0.3
-        lockedHigh := recentHigh
-
-// --- Resolve final range based on mode ---
-float rangeHigh = switch anchorMode
-    "Manual"           => manualHigh > 0 ? manualHigh : rollingHigh
-    "Confirmed Pivots" => not na(lockedHigh) ? lockedHigh : rollingHigh
-    => rollingHigh
-
-float rangeLow = switch anchorMode
-    "Manual"           => manualLow > 0 ? manualLow : rollingLow
-    "Confirmed Pivots" => not na(lockedLow) ? lockedLow : rollingLow
-    => rollingLow
-
-// Ensure valid range (high must be above low)
 float finalHigh = math.max(rangeHigh, rangeLow)
 float finalLow  = math.min(rangeHigh, rangeLow)
 
@@ -209,12 +160,8 @@ if barstate.islast and not na(finalHigh) and not na(finalLow) and rangeSize > 0
     float sqrtMid      = math.sqrt(midPrice)
     float currentClose = close
 
-    // Determine line start based on mode
-    int lineStart = switch anchorMode
-        "Rolling" => bar_index - safeLb
-        => bar_index - 200  // For locked/manual modes, show reasonable historical context
-
-    int lineEnd = extendLevels ? bar_index + 50 : bar_index + 50
+    int lineStart = anchorMode == "Rolling" ? bar_index - safeLb : 0
+    int lineEnd   = bar_index + 50
 
     for i = -levelCount to levelCount
         float sqrtLevel = sqrtMid + (i * increment)
@@ -244,7 +191,7 @@ if barstate.islast and not na(finalHigh) and not na(finalLow) and rangeSize > 0
                 // Current bar marker
                 if showBarMarkers
                     array.push(drawnMarkers, line.new(
-                         bar_index - 1, price,
+                         bar_index, price,
                          bar_index + 1, price,
                          color=lineCol, width=lineW + 2,
                          style=line.style_solid))
