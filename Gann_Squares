@@ -1,50 +1,46 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 
 //@version=5
-indicator("Gann Square", overlay=true, max_lines_count=100, max_labels_count=100)
+indicator("Gann Squares", overlay=true, max_lines_count=100, max_labels_count=100)
 
 // ─────────────────────────────────────────────────────────────
 // INPUTS
 // ─────────────────────────────────────────────────────────────
 
 string GRP_CORE  = "Core Settings"
-string GRP_CARD  = "Cardinal Levels"
-string GRP_CROSS = "Cross Levels"
+string GRP_CARD  = "Cardinal Levels (0°/90°/180°/270°)"
+string GRP_CROSS = "Cross Levels (45°/135°/225°/315°)"
 string GRP_LABEL = "Labels"
 
 // Core
-anchorMode   = input.string("Dynamic", "Anchor Mode", options=["Dynamic", "Fixed Price"], group=GRP_CORE, display=display.none,
-     tooltip="Dynamic: levels recalculate around current close each bar.\nFixed Price: levels lock to a specific seed price (e.g., major swing high/low).")
-fixedPrice   = input.float(0.0, "Fixed Anchor Price", minval=0.0, group=GRP_CORE, display=display.none,
-     tooltip="Only used when Anchor Mode = Fixed Price. Set to a major swing high or low.")
-priceLevel   = input.int(5, "Price Levels", options=[3, 5], group=GRP_CORE, display=display.none,
+priceLevel = input.int(5, "Price Levels", options=[3, 5], group=GRP_CORE, display=display.none,
      tooltip="3 = core S/R + midpoint. 5 = adds one extra level per side.")
-lineSpan     = input.int(3, "Line Span (bars)", minval=1, maxval=50, group=GRP_CORE, display=display.none,
-     tooltip="Width of level markers in bars. 1 = minimal nub, 3 = visible tick, 50 = extended span. Centered on current bar.")
+lineSpan   = input.int(1, "Line Span (bars)", minval=1, maxval=50, group=GRP_CORE, display=display.none,
+     tooltip="Width of level markers in bars. 1 = minimal nub.")
 
-// Cardinal levels (primary Gann spiral numbers — 0°/90°/180°/270° axes)
+// Cardinal levels
 showCardinal       = input.bool(true, "Show Cardinal Levels", group=GRP_CARD, display=display.none)
-cardinalColor      = input.color(color.new(color.white, 25), "Color", group=GRP_CARD, display=display.none)
-cardinalWidth      = input.int(2, "Width", minval=1, maxval=4, group=GRP_CARD, display=display.none)
-cardinalStyle      = input.string("Solid", "Style", options=["Solid", "Dashed", "Dotted"], group=GRP_CARD, display=display.none)
-cardinalExtraColor = input.color(color.new(color.white, 25), "Extended Level Color", group=GRP_CARD, display=display.none,
+cardinalColor      = input.color(color.new(color.white, 0), "Color", group=GRP_CARD, display=display.none)
+cardinalWidth      = input.int(1, "Width", minval=1, maxval=4, group=GRP_CARD, display=display.none)
+cardinalStyle      = input.string("Dotted", "Style", options=["Solid", "Dashed", "Dotted"], group=GRP_CARD, display=display.none)
+cardinalExtraColor = input.color(color.new(color.white, 0), "Extended Level Color", group=GRP_CARD, display=display.none,
      tooltip="Color for R2/S2 levels (5-level mode only).")
-cardinalExtraWidth = input.int(2, "Extended Level Width", minval=1, maxval=4, group=GRP_CARD, display=display.none)
-cardinalExtraStyle = input.string("Solid", "Extended Level Style", options=["Solid", "Dashed", "Dotted"], group=GRP_CARD, display=display.none)
+cardinalExtraWidth = input.int(1, "Extended Level Width", minval=1, maxval=4, group=GRP_CARD, display=display.none)
+cardinalExtraStyle = input.string("Dotted", "Extended Level Style", options=["Solid", "Dashed", "Dotted"], group=GRP_CARD, display=display.none)
 
-// Cross levels (diagonal midpoints — 45°/135°/225°/315° axes)
+// Cross levels
 showCross       = input.bool(true, "Show Cross Levels", group=GRP_CROSS, display=display.none)
 crossColor      = input.color(color.new(color.white, 50), "Color", group=GRP_CROSS, display=display.none)
 crossWidth      = input.int(1, "Width", minval=1, maxval=4, group=GRP_CROSS, display=display.none)
-crossStyle      = input.string("Solid", "Style", options=["Solid", "Dashed", "Dotted"], group=GRP_CROSS, display=display.none)
+crossStyle      = input.string("Dotted", "Style", options=["Solid", "Dashed", "Dotted"], group=GRP_CROSS, display=display.none)
 crossExtraColor = input.color(color.new(color.white, 50), "Extended Level Color", group=GRP_CROSS, display=display.none,
      tooltip="Color for second cross level (5-level mode only).")
 crossExtraWidth = input.int(1, "Extended Level Width", minval=1, maxval=4, group=GRP_CROSS, display=display.none)
-crossExtraStyle = input.string("Solid", "Extended Level Style", options=["Solid", "Dashed", "Dotted"], group=GRP_CROSS, display=display.none)
+crossExtraStyle = input.string("Dotted", "Extended Level Style", options=["Solid", "Dashed", "Dotted"], group=GRP_CROSS, display=display.none)
 
 // Labels
-showLabels   = input.bool(false, "Show Labels", group=GRP_LABEL, display=display.none)
-labelColor   = input.color(color.new(color.white, 0), "Label Color", group=GRP_LABEL, display=display.none)
+showLabels = input.bool(false, "Show Labels", group=GRP_LABEL, display=display.none)
+labelColor = input.color(color.new(color.white, 0), "Label Color", group=GRP_LABEL, display=display.none)
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS
@@ -118,8 +114,8 @@ if barstate.islast and array.size(gannNum) > 0
             label.delete(array.get(drawnLabels, i))
         array.clear(drawnLabels)
 
-    // Anchor price
-    float anchor = anchorMode == "Fixed Price" and fixedPrice > 0 ? fixedPrice : close
+    // Anchor: always dynamic from current close
+    float anchor = close
     float denom  = getDenominator(anchor)
     float scaled = anchor * denom
 

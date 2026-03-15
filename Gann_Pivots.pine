@@ -2,7 +2,7 @@
 // https://mozilla.org/MPL/2.0/
 
 //@version=6
-indicator("Gann Pivot Grid", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("Gann Pivots", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // ─────────────────────────────────────────────────────────────
 // INPUTS
@@ -14,21 +14,12 @@ string GRP_STYLE  = "Visual Style"
 string GRP_LABELS = "Labels"
 
 // --- Core ---
-levelCount = input.int(10, "Levels Per Side", minval=3, maxval=20, group=GRP_CORE, display=display.none,
-     tooltip="Levels above and below the midpoint. 8-12 optimal.")
-
 showMinorLevels = input.bool(true, "Show Minor Levels", group=GRP_CORE, display=display.none,
      tooltip="Toggle thinner intermediate levels.")
-
-incrementOverride = input.float(0.0, "Increment Override", minval=0.0, maxval=50.0, step=0.5, group=GRP_CORE, display=display.none,
-     tooltip="Override auto sqrt increment. 0 = automatic.")
 
 // --- Anchor Mode ---
 anchorMode = input.string("Rolling", "Anchor Mode", options=["Rolling", "Manual"], group=GRP_ANCHOR, display=display.none,
      tooltip="Rolling: recalculates every bar from lookback window (adaptive, some level drift).\nManual: uses your specified high/low inputs (fully static, requires your structural judgment).")
-
-lookbackBars = input.int(500, "Rolling Lookback Bars", minval=50, maxval=5000, group=GRP_ANCHOR, display=display.none,
-     tooltip="Only used in Rolling mode. Bars used to detect the macro range.")
 
 manualHigh = input.float(0.0, "Manual Range High", minval=0.0, group=GRP_ANCHOR, display=display.none,
      tooltip="Only used in Manual mode. Set to the high of your structural range.")
@@ -36,11 +27,11 @@ manualLow  = input.float(0.0, "Manual Range Low", minval=0.0, group=GRP_ANCHOR, 
      tooltip="Only used in Manual mode. Set to the low of your structural range.")
 
 // --- Style ---
-extendLevels = input.bool(true, "Extend Right", group=GRP_STYLE, display=display.none)
+extendLevels = input.bool(true, "Extend Lines", group=GRP_STYLE, display=display.none)
 majorColor   = input.color(color.new(color.white, 25), "Major Level Color", group=GRP_STYLE, display=display.none)
 minorColor   = input.color(color.new(color.white, 70), "Minor Level Color", group=GRP_STYLE, display=display.none)
-extremeColor = input.color(color.new(color.blue, 0), "Extreme Level Color", group=GRP_STYLE, display=display.none)
-pivotColor   = input.color(color.new(color.aqua, 0), "Pivot Level Color", group=GRP_STYLE, display=display.none)
+extremeColor = input.color(color.new(color.white, 0), "Extreme Level Color", group=GRP_STYLE, display=display.none)
+pivotColor   = input.color(color.new(color.white, 0), "Pivot Level Color", group=GRP_STYLE, display=display.none)
 majorWidth   = input.int(2, "Major Line Width", minval=1, maxval=4, group=GRP_STYLE, display=display.none)
 minorWidth   = input.int(1, "Minor Line Width", minval=1, maxval=4, group=GRP_STYLE, display=display.none)
 lineStyle    = input.string("Dotted", "Line Style", options=["Solid", "Dashed", "Dotted"], group=GRP_STYLE, display=display.none)
@@ -51,6 +42,15 @@ labelSize        = input.string("normal", "Label Size", options=["tiny", "small"
 showPriceInLabel = input.bool(false, "Show Price in Label", group=GRP_LABELS, display=display.none)
 labelOffset      = input.int(20, "Label Offset (bars)", minval=1, maxval=100, group=GRP_LABELS, display=display.none)
 showBarMarkers   = input.bool(true, "Show Current Bar Markers", group=GRP_LABELS, display=display.none)
+
+// ─────────────────────────────────────────────────────────────
+// HARDCODED CONSTANTS
+// ─────────────────────────────────────────────────────────────
+
+int levelCount = 8
+
+// Auto lookback: 500 for H6 and below, 250 for daily, 120 for multi-day
+int autoLookback = timeframe.in_seconds() <= 21600 ? 500 : timeframe.in_seconds() <= 86400 ? 250 : 120
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS
@@ -107,7 +107,7 @@ getLevelDescription(int idx, int total, float price, float currentClose) =>
 // RANGE DETECTION
 // ─────────────────────────────────────────────────────────────
 
-int safeLb        = math.max(1, math.min(lookbackBars, bar_index + 1))
+int safeLb        = math.max(1, math.min(autoLookback, bar_index + 1))
 float rollingHigh = ta.highest(high, safeLb)
 float rollingLow  = ta.lowest(low, safeLb)
 
@@ -127,8 +127,7 @@ float rangeSize = finalHigh - finalLow
 float sqrtHigh      = math.sqrt(finalHigh)
 float sqrtLow       = math.sqrt(finalLow)
 float sqrtRange     = sqrtHigh - sqrtLow
-float autoIncrement = levelCount > 0 ? sqrtRange / levelCount : 1.0
-float increment     = incrementOverride > 0 ? incrementOverride : autoIncrement
+float increment     = levelCount > 0 ? sqrtRange / levelCount : 1.0
 
 // ─────────────────────────────────────────────────────────────
 // DRAWING
@@ -160,8 +159,10 @@ if barstate.islast and not na(finalHigh) and not na(finalLow) and rangeSize > 0
     float sqrtMid      = math.sqrt(midPrice)
     float currentClose = close
 
-    int lineStart = anchorMode == "Rolling" ? bar_index - safeLb : 0
+    int lineStart = bar_index - math.min(safeLb, 500)
     int lineEnd   = bar_index + 50
+
+    string lvlExtend = extendLevels ? "both" : "none"
 
     for i = -levelCount to levelCount
         float sqrtLevel = sqrtMid + (i * increment)
@@ -186,14 +187,14 @@ if barstate.islast and not na(finalHigh) and not na(finalLow) and rangeSize > 0
                      lineEnd, price,
                      color=lineCol, width=lineW,
                      style=getLineStyle(lineStyle),
-                     extend=extendLevels ? extend.right : extend.none))
+                     extend=lvlExtend == "both" ? extend.both : extend.none))
 
                 // Current bar marker
                 if showBarMarkers
                     array.push(drawnMarkers, line.new(
                          bar_index, price,
                          bar_index + 1, price,
-                         color=lineCol, width=lineW + 2,
+                         color=lineCol, width=lineW + 1,
                          style=line.style_solid))
 
                 // Label
