@@ -8,7 +8,7 @@ is_daily_plus = timeframe.in_seconds(timeframe.period) >= 86400  // 1D or more
 
 n = is_minute ? 2 : is_hourly ? 3 : 5
 
-Period = is_minute ? 21 : is_hourly ? 34 : 55
+Period = is_minute ? 13 : is_hourly ? 21 : 34
 
 CumMode = 'EMA'  // Hardcoded to EMA across all timeframes
 UltraData = input.bool(false, '', inline='Data', group='Logic Setting')

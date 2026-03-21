@@ -6,7 +6,7 @@ indicator("MSB", overlay=true, max_lines_count=500, max_labels_count=500, max_bo
 // ─────────────────────────────────────────────────────────────
 
 atrLen               = input.int(14, "ATR Length", minval=5, maxval=50, tooltip="Period for ATR calculation used in pivot confirmation.")
-atrConfirmMult       = input.float(0.55, "ATR Confirmation Multiplier", minval=0.1, maxval=3.0, step=0.05, tooltip="Price must move this many ATRs away from a candidate swing to confirm it as a pivot. Lower = faster confirmation, more pivots. Higher = slower, cleaner.")
+atrConfirmMult       = input.float(0.75, "ATR Confirmation Multiplier", minval=0.1, maxval=3.0, step=0.05, tooltip="Price must move this many ATRs away from a candidate swing to confirm it as a pivot. Lower = faster confirmation, more pivots. Higher = slower, cleaner.")
 pivotSource          = input.string("Close", "Pivot Source", options=["Close", "Wick"], tooltip="Close: candle body closes. Wick: high/low wicks.")
 
 alertBullMSB         = input.bool(true, "Alert on Bullish MSB", group="Alerts")
