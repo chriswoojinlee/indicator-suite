@@ -1,23 +1,15 @@
 //@version=5
 //
-//  As noted here: 
-//  Volume Zone Oscillator, uses and formula
-//      https://www.investopedia.com/articles/active-trading/072815/how-interpret-volume-zone-oscillator.asp
+//  Volume Zone Oscillator with Gann-aligned lookback periods (5-tier, trade-class aligned):
+//  Scalp (≤5m):           zLen=9,  maLen=4,  smLen=3  | 360/40
+//  Intraday (10m,15m):    zLen=12, maLen=5,  smLen=4  | 360/30
+//  Swing (30m,1H,2H):     zLen=15, maLen=6,  smLen=4  | 360/24
+//  Positional (4H,6H,12H):zLen=18, maLen=8,  smLen=5  | 360/20
+//  Macro (D+):            zLen=24, maLen=10, smLen=6  | 360/15btc
 //
-//  Volume Zone Oscillator, uses and formula
-//      https://www.investopedia.com/terms/p/price-zone-oscillator.asp
-//
-//  Volume Zone Oscillator, uses and formula (in depth)
-//      http://capitalsynergy.com/resources/IFTA09VZO.pdf
-//
-//  Usage:
-//    Positive -> bullish, negative -> bearish
-//    -60/60 is seen as the limit of the oscillator range, and a pullback should be expected from there
-//
-//  Multi-Timeframe Auto-Detection:
-//    LTF (1m-30m): VZO=13, MA=5
-//    MTF (1H-12H):  VZO=21, MA=8
-//    HTF (1D+):    VZO=34, MA=13
+//  EMA pre-smoothing on source stabilizes volume direction classification.
+//  DEMA post-smoothing on vzo output reduces lag vs standard EMA.
+//  No signal debounce — consistent with Fisher behavior.
 
 indicator("VZO", shorttitle="VZO", precision=1)
 
@@ -26,36 +18,40 @@ indicator("VZO", shorttitle="VZO", precision=1)
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 zone(_src, _type, _len) =>
-    vp = _src > _src[1] ? _type : _src < _src[1] ? -_type : _src == _src[1] ? 0 : 0
+    vp = _src > _src[1] ? _type : _src < _src[1] ? -_type : 0
     z = 100 * (ta.ema(vp, _len) / ta.ema(_type, _len))
 
-hma(_src, _len) =>
-    ta.wma(2*ta.wma(_src, _len/2)-ta.wma(_src, _len), int(math.sqrt(_len)))
+dema(x, t) =>
+    var float e1 = na
+    var float e2 = na
+    e1 := na(e1) ? x : x * (2.0 / (t + 1)) + e1 * (1.0 - 2.0 / (t + 1))
+    e2 := na(e2) ? x : e1 * (2.0 / (t + 1)) + e2 * (1.0 - 2.0 / (t + 1))
+    2.0 * e1 - e2
 
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
-//Auto-Detect Timeframe and Set Parameters
+//Timeframe Detection (5-tier, trade-class aligned)
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-// Get current timeframe in minutes
-tf_in_minutes = timeframe.in_seconds() / 60
+tf_in_secs = timeframe.in_seconds()
 
-// Determine timeframe category and set parameters
-var int zLen = 21
-var int maLen = 8
-var string tf_category = "MTF"
+is_macro       = timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly or tf_in_secs > 43200
+is_positional  = not is_macro and tf_in_secs > 7200 and tf_in_secs <= 43200
+is_swing       = not is_macro and not is_positional and tf_in_secs >= 1800 and tf_in_secs <= 7200
+is_intraday    = not is_macro and not is_positional and not is_swing and tf_in_secs > 300 and tf_in_secs < 1800
+is_scalp       = not is_macro and not is_positional and not is_swing and not is_intraday
 
-if tf_in_minutes <= 30  // LTF: 1m, 5m, 15m, 30m
-    zLen := 13
-    maLen := 5
-    tf_category := "LTF"
-else if tf_in_minutes <= 720  // MTF: 1H (60m), 2H (120m), 4H (240m), 6H (360m), 12H (720m)
-    zLen := 21
-    maLen := 8
-    tf_category := "MTF"
-else  // HTF: 1D and above
-    zLen := 34
-    maLen := 13
-    tf_category := "HTF"
+// Gann-aligned lookback: 9 → 12 → 15 → 18 → 24
+zLen  = is_macro ? 24 : is_positional ? 18 : is_swing ? 15 : is_intraday ? 12 : 9
+
+// Classification pre-smoothing: proportional to zLen
+maLen = is_macro ? 10 : is_positional ? 8 : is_swing ? 6 : is_intraday ? 5 : 4
+
+// Output DEMA smoothing: lighter than maLen
+smLen = is_macro ? 5 : is_positional ? 4 : is_swing ? 4 : is_intraday ? 3 : 3
+
+// Fixed threshold — flat across tiers (VZO scale is fixed at ±100)
+hth = 35
+lth = -35
 
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Inputs
@@ -63,38 +59,33 @@ else  // HTF: 1D and above
 
 src0 = input.source(close, "Source")
 
-// Hardcoded settings (always on)
-showv = true
-vzones = true
-outer = true
-showzero = true
 show_signals = true
 
-// Hardcoded color scheme
-color_bullpower = color.green
-color_bullforming = color.green
+color_bullpower    = color.green
+color_bullforming  = color.green
 color_bullpullback = color.red
-color_bearpower = color.red
-color_bearforming = color.red
+color_bearpower    = color.red
+color_bearforming  = color.red
 color_bearpullback = color.green
-
-// Overbought/Oversold Thresholds - 40/-40 are the actual overbought/oversold levels
-hth = 40
-lth = -40
 
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Calculations
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-vol    = volume
-tp     = 60
+vol = volume
+tp  = 60
 
-// Always use Exponential MA for multi-timeframe mode
+// EMA pre-smoothing on source for stable volume direction classification
 src = ta.ema(src0, maLen)
-      
-vzo    = zone(src, vol, zLen)
 
-//Enhanced 6-Stage Signal System
+// Raw VZO → DEMA output smoothing
+vzo_raw = zone(src, vol, zLen)
+vzo     = dema(vzo_raw, smLen)
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+//Signal System
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
 bullpower    = (vzo > 0) and (vzo >= vzo[1]) and (vzo >= hth)
 bullforming  = (vzo > 0) and (vzo > vzo[1]) and (vzo < hth)
 bullpullback = (vzo > 0) and (vzo < vzo[1])
@@ -102,40 +93,34 @@ bearpower    = (vzo < 0) and (vzo <= vzo[1]) and (vzo <= lth)
 bearforming  = (vzo < 0) and (vzo < vzo[1]) and (vzo > lth)
 bearpullback = (vzo < 0) and (vzo > vzo[1])
 
-//Enhanced Color Scheme (6 distinct colors with hardcoded colors)
-osccolor = bullpower ? color_bullpower :
-           bullforming ? color_bullforming :
+osccolor = bullpower    ? color_bullpower    :
+           bullforming  ? color_bullforming  :
            bullpullback ? color_bullpullback :
-           bearpower ? color_bearpower :
-           bearforming ? color_bearforming :
+           bearpower    ? color_bearpower    :
+           bearforming  ? color_bearforming  :
            bearpullback ? color_bearpullback :
            color.gray
 
-// Track each individual state
-prev_bullpower = bullpower[1]
-prev_bullforming = bullforming[1]
+prev_bullpower    = bullpower[1]
+prev_bullforming  = bullforming[1]
 prev_bullpullback = bullpullback[1]
-prev_bearpower = bearpower[1] 
-prev_bearforming = bearforming[1]
+prev_bearpower    = bearpower[1]
+prev_bearforming  = bearforming[1]
 prev_bearpullback = bearpullback[1]
 
-// Detect when ANY state changes
-any_state_change = (bullpower != prev_bullpower) or 
-                   (bullforming != prev_bullforming) or 
-                   (bullpullback != prev_bullpullback) or 
-                   (bearpower != prev_bearpower) or 
-                   (bearforming != prev_bearforming) or 
+any_state_change = (bullpower != prev_bullpower) or
+                   (bullforming != prev_bullforming) or
+                   (bullpullback != prev_bullpullback) or
+                   (bearpower != prev_bearpower) or
+                   (bearforming != prev_bearforming) or
                    (bearpullback != prev_bearpullback)
 
-// Determine circle color by matching the oscillator color logic
 current_osc_is_green = (osccolor == color_bullpower) or (osccolor == color_bullforming) or (osccolor == color_bearpullback)
-current_osc_is_red = (osccolor == color_bearpower) or (osccolor == color_bearforming) or (osccolor == color_bullpullback)
+current_osc_is_red   = (osccolor == color_bearpower) or (osccolor == color_bearforming) or (osccolor == color_bullpullback)
 
-// Circle color matches current oscillator color
 bull_to_bear_transition = any_state_change and current_osc_is_red
 bear_to_bull_transition = any_state_change and current_osc_is_green
 
-// Transition circle colors
 bull_to_bear_circle_color = color.red
 bear_to_bull_circle_color = color.green
 
@@ -143,110 +128,84 @@ bear_to_bull_circle_color = color.green
 //Signal Detection
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-//Buy Signal: When VZO was oversold and crosses back above -40, or reverses up while still oversold
-buy_signal = (ta.crossover(vzo, lth)) or ((vzo <= lth) and (vzo > vzo[1]) and (vzo[1] <= vzo[2]))
-
-//Sell Signal: When VZO was overbought and crosses back below 40, or reverses down while still overbought
+buy_signal  = (ta.crossover(vzo, lth))  or ((vzo <= lth) and (vzo > vzo[1]) and (vzo[1] <= vzo[2]))
 sell_signal = (ta.crossunder(vzo, hth)) or ((vzo >= hth) and (vzo < vzo[1]) and (vzo[1] >= vzo[2]))
 
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Outputs
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-//Background
 bgcol = color.new(color.silver, 100)
-col1 = color.red
-col2 = color.red
-col3 = color.new(color.white, 100)  // Transparent
-col4 = color.new(color.white, 100)  // Transparent
-
-col5 = color.new(color.white, 100)  // Transparent
-col6 = color.new(color.white, 100)  // Transparent
-col7 = color.green
-col8 = color.green
-
-p1 = plot(80, "", bgcol, 1, editable=false)
-p2 = plot(-80, "", bgcol, 1, editable=false)
+p1 = plot(80,  "", bgcol, 1, editable=false, display=display.pane)
+p2 = plot(-80, "", bgcol, 1, editable=false, display=display.pane)
 fill(p1, p2, color=color.new(color.silver, 95))
 
-// Zone plots
-p80 = plot(80, "80", color.new(col1, 100), 1, editable=false)
-p60 = plot(60, "60", color.new(col2, 100), 1, editable=false)
-p40 = plot(40, "40", color.new(col3, 100), 1, editable=false)
-p20 = plot(20, "20", color.new(col4, 100), 1, editable=false)
-p0  = plot(0,  "0",  color.new(col5, 100), 1, editable=false)
-p_20 = plot(-20, "-20", color.new(col6, 100), 1, editable=false)
-p_40 = plot(-40, "-40", color.new(col7, 100), 1, editable=false)
-p_60 = plot(-60, "-60", color.new(col8, 100), 1, editable=false)
-p_80 = plot(-80, "-80", color.new(col8, 100), 1, editable=false)
+col1 = color.red
+col7 = color.green
 
-// Fill between zones (with fully transparent neutral zones)
-fill(p80, p60, color=color.new(col1, tp))
-fill(p60, p40, color=color.new(col2, tp))
-fill(p40, p20, color=color.new(col3, 100))  // Fully transparent
-fill(p20, p0, color=color.new(col4, 100))   // Fully transparent
-fill(p0, p_20, color=color.new(col5, 100))  // Fully transparent
-fill(p_20, p_40, color=color.new(col6, 100))  // Fully transparent
+p80  = plot( 80, "80",   color.new(col1, 100), 1, editable=false, display=display.pane)
+p60  = plot( 60, "60",   color.new(col1, 100), 1, editable=false, display=display.pane)
+p40  = plot( 40, "40",   color.new(color.white, 100), 1, editable=false, display=display.pane)
+p20  = plot( 20, "20",   color.new(color.white, 100), 1, editable=false, display=display.pane)
+p0   = plot(  0, "0",    color.new(color.white, 100), 1, editable=false, display=display.pane)
+p_20 = plot(-20, "-20",  color.new(color.white, 100), 1, editable=false, display=display.pane)
+p_40 = plot(-40, "-40",  color.new(col7, 100), 1, editable=false, display=display.pane)
+p_60 = plot(-60, "-60",  color.new(col7, 100), 1, editable=false, display=display.pane)
+p_80 = plot(-80, "-80",  color.new(col7, 100), 1, editable=false, display=display.pane)
+
+fill(p80,  p60,  color=color.new(col1, tp))
+fill(p60,  p40,  color=color.new(col1, tp))
+fill(p40,  p20,  color=color.new(color.white, 100))
+fill(p20,  p0,   color=color.new(color.white, 100))
+fill(p0,   p_20, color=color.new(color.white, 100))
+fill(p_20, p_40, color=color.new(color.white, 100))
 fill(p_40, p_60, color=color.new(col7, tp))
-fill(p_60, p_80, color=color.new(col8, tp))
+fill(p_60, p_80, color=color.new(col7, tp))
 
-//Zero Line
-plot(0, "Zero Line", color.new(color.white, 0), 1, editable=true)
+plot(0, "Zero Line", color.new(color.gray, 0), 1, editable=true, display=display.pane)
+plot(vzo, "Volume Zone Oscillator", osccolor, 2, display=display.all)
 
-//VZO with Enhanced 6-Color System
-plot(vzo, "Volume Zone Oscillator", osccolor, 2)
-
-// Plot Transition Circles
-// Bear Transitions (Red circles with black center)
-plotshape(bear_to_bull_transition ? vzo[1] : na, 
-          style=shape.circle, location=location.absolute, color=bear_to_bull_circle_color, size=size.small, 
+plotshape(bear_to_bull_transition ? vzo[1] : na,
+          style=shape.circle, location=location.absolute, color=bear_to_bull_circle_color, size=size.small,
           title="Bull Transition", offset=-1)
-plotshape(bear_to_bull_transition ? vzo[1] : na, 
-          style=shape.circle, location=location.absolute, color=color.black, size=size.tiny, 
+plotshape(bear_to_bull_transition ? vzo[1] : na,
+          style=shape.circle, location=location.absolute, color=color.black, size=size.tiny,
           title="Bull Inner", offset=-1)
 
-// Bull Transitions (Green circles with black center)
-plotshape(bull_to_bear_transition ? vzo[1] : na, 
-          style=shape.circle, location=location.absolute, color=bull_to_bear_circle_color, size=size.small, 
+plotshape(bull_to_bear_transition ? vzo[1] : na,
+          style=shape.circle, location=location.absolute, color=bull_to_bear_circle_color, size=size.small,
           title="Bear Transition", offset=-1)
-plotshape(bull_to_bear_transition ? vzo[1] : na, 
-          style=shape.circle, location=location.absolute, color=color.black, size=size.tiny, 
+plotshape(bull_to_bear_transition ? vzo[1] : na,
+          style=shape.circle, location=location.absolute, color=color.black, size=size.tiny,
           title="Bear Inner", offset=-1)
 
-//Buy/Sell Signal Labels
 if buy_signal
-    label.new(bar_index, vzo, text="B", style=label.style_label_up, color=color.green, 
+    label.new(bar_index, vzo, text="B", style=label.style_label_up, color=color.green,
               textcolor=color.white, size=size.normal)
 
 if sell_signal
-    label.new(bar_index, vzo, text="S", style=label.style_label_down, color=color.red, 
+    label.new(bar_index, vzo, text="S", style=label.style_label_down, color=color.red,
               textcolor=color.white, size=size.normal)
 
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Extreme Zone X Markers
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-// Show X markers in extreme zones every bar to indicate no-go zones
 show_extreme_marker = bar_index % 1 == 0
 
-// Red X's in extreme overbought zone (80 to 100)
-plotshape(show_extreme_marker ? 95 : na, 
-          style=shape.xcross, location=location.absolute, color=color.red, size=size.tiny, 
+plotshape(show_extreme_marker ?  95 : na,
+          style=shape.xcross, location=location.absolute, color=color.red, size=size.tiny,
           title="Extreme Overbought")
 
-// Green X's in extreme oversold zone (-80 to -100)
-plotshape(show_extreme_marker ? -95 : na, 
-          style=shape.xcross, location=location.absolute, color=color.green, size=size.tiny, 
+plotshape(show_extreme_marker ? -95 : na,
+          style=shape.xcross, location=location.absolute, color=color.green, size=size.tiny,
           title="Extreme Oversold")
 
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Alerts
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-// Buy/Sell Signal Alerts
-alertcondition(buy_signal, title="VZO Buy Signal", message="VZO: Buy Signal Detected")
-alertcondition(sell_signal, title="VZO Sell Signal", message="VZO: Sell Signal Detected")
-
-// Transition Alerts
+alertcondition(buy_signal,           title="VZO Buy Signal",          message="VZO: Buy Signal Detected")
+alertcondition(sell_signal,          title="VZO Sell Signal",         message="VZO: Sell Signal Detected")
 alertcondition(bull_to_bear_transition, title="Bull to Bear Transition", message="VZO: Bull to Bear Transition")
 alertcondition(bear_to_bull_transition, title="Bear to Bull Transition", message="VZO: Bear to Bull Transition")
