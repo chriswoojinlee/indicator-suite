@@ -266,6 +266,7 @@ var int[]   gapType   = array.new_int(0)
 var int[]   gapBar    = array.new_int(0)
 var line[]  gapLines  = array.new_line(0)
 var label[] gapLabels = array.new_label(0)
+var int[]   gapEmitBI = array.new_int(0)
 
 // ─────────────────────────────────────────────────────────────
 // EMIT LEVELS
@@ -294,6 +295,7 @@ if newGapEmit
     array.push(gapBar,    h1GapAnc)
     array.push(gapLines,  line(na))
     array.push(gapLabels, label(na))
+    array.push(gapEmitBI, bar_index)
 
 // ─────────────────────────────────────────────────────────────
 // SWEEP / STALE — Weekend Extremes
@@ -338,6 +340,11 @@ while array.size(lvlPrice) > maxExtLevels
 
 // ─────────────────────────────────────────────────────────────
 // FILL — CME Gap Fill (no time expiry)
+//
+// Same-bar guard: on higher timeframes (12H+), the bar that
+// emits a gap level may already contain price that crosses it.
+// Skipping fill removal on the emission bar_index prevents the
+// level from being pushed and immediately deleted in one cycle.
 // ─────────────────────────────────────────────────────────────
 
 var bool gapFillFired = false
@@ -347,12 +354,11 @@ if array.size(gapPrice) > 0
     for j = array.size(gapPrice) - 1 to 0
         float p      = array.get(gapPrice, j)
         int   t      = array.get(gapType,  j)
+        int   eBI    = array.get(gapEmitBI, j)
         bool  filled = (t ==  1 and low  <= p) or (t == -1 and high >= p)
 
-        if filled
+        if filled and bar_index > eBI
             gapFillFired := true
-
-        if filled
             line.delete( array.get(gapLines,  j))
             label.delete(array.get(gapLabels, j))
             array.remove(gapPrice,  j)
@@ -360,6 +366,7 @@ if array.size(gapPrice) > 0
             array.remove(gapBar,    j)
             array.remove(gapLines,  j)
             array.remove(gapLabels, j)
+            array.remove(gapEmitBI, j)
 
 while array.size(gapPrice) > maxGapLevels
     line.delete( array.get(gapLines,  0))
@@ -369,6 +376,7 @@ while array.size(gapPrice) > maxGapLevels
     array.shift(gapBar)
     array.shift(gapLines)
     array.shift(gapLabels)
+    array.shift(gapEmitBI)
 
 // ─────────────────────────────────────────────────────────────
 // ALERTS
