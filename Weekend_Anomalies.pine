@@ -9,9 +9,11 @@ indicator("Weekend Anomalies", overlay=true, max_lines_count=500, max_labels_cou
 //
 // Both features run entirely at 1H resolution via request.security functions.
 // open/close[1] inside those functions = exact 1H prices at transition bars.
-// No chart-level OHLC used for detection — correct on all chart timeframes.
-// CME session defined by CT time (no CME:BTC1! required inside functions).
-// CME close: Friday 4:00 PM CT | CME open: Sunday 5:00 PM CT
+// CME gap FILL is also detected at 1H (gapFlld) to avoid same-bar ambiguity on HTF.
+// CME session defined by CT time. CME close: Fri 4:00 PM CT | CME open: Sun 5:00 PM CT.
+//
+// Lines are drawn with xloc.bar_index (not bar_time) to avoid sub-bar dx
+// rendering artifacts on HTF charts (1W/2D/3D where 1-day dx < 1 bar).
 
 // ─────────────────────────────────────────────────────────────
 // INPUTS
@@ -58,15 +60,12 @@ getLineStyle(string s) =>
         => line.style_solid
 
 // ─────────────────────────────────────────────────────────────
-// 1H FUNCTION: CME GAP DETECTION
+// 1H FUNCTION: CME GAP DETECTION + FILL TRACKING
 //
-// Runs on current ticker at 1H via request.security.
-// open/close[1] = exact 1H prices at CME open/close bars.
-// gapAnc: unique cycle ID (Friday 3PM CT bar open time).
-//   Reset to na at each CME close. Set at CME open if gap qualifies.
-//   Persists through the week via var. Chart detects via != lastEmitted.
-// Daily maintenance breaks (Mon–Thu 4–5PM CT) are filtered because
-//   closeT will have dow != 6 (not Friday CT) at their CME open.
+// gapFlld becomes true on any 1H bar (including the open bar itself)
+// whose H/L crosses gapLvl. Persists via var until the next CME close
+// resets the cycle. The chart consumes h1GapFlld for the current
+// week's gap, bypassing chart-bar H/L same-bar ambiguity on HTF.
 // ─────────────────────────────────────────────────────────────
 
 f_cmeGap(float minPct) =>
@@ -80,36 +79,36 @@ f_cmeGap(float minPct) =>
     var float gapLvl   = na
     var int   gapTyp   = 0
     var int   gapAnc   = na
+    var bool  gapFlld  = false
 
     if not inS and prevS      // CME just closed — start new cycle
-        closeRef := close[1]  // close of last in-session 1H bar
-        closeT   := time[1]   // open time of that bar (line anchor)
+        closeRef := close[1]
+        closeT   := time[1]
         gapLvl   := na
         gapTyp   := 0
         gapAnc   := na
+        gapFlld  := false
 
     if inS and not prevS and not na(closeRef)   // CME just opened
-        if dayofweek(closeT, "America/Chicago") == 6  // Friday close = weekend gap
+        if dayofweek(closeT, "America/Chicago") == 6
             float m = math.abs(open - closeRef) / closeRef * 100
             if m >= minPct
                 gapLvl := closeRef
                 gapTyp := open > closeRef ? 1 : -1
                 gapAnc := closeT
+                // Immediate same-bar fill check (open bar's H/L)
+                gapFlld := (gapTyp == 1 and low <= gapLvl) or (gapTyp == -1 and high >= gapLvl)
+
+    // Continuous fill check on each subsequent 1H bar
+    if not na(gapAnc) and not gapFlld
+        if (gapTyp == 1 and low <= gapLvl) or (gapTyp == -1 and high >= gapLvl)
+            gapFlld := true
 
     prevS := inS
-    [gapLvl, gapTyp, gapAnc]
+    [gapLvl, gapTyp, gapAnc, gapFlld]
 
 // ─────────────────────────────────────────────────────────────
 // 1H FUNCTION: WEEKEND EXTREME DETECTION
-//
-// Runs on current ticker at 1H via request.security.
-// Rolling 4-day weekday window tracked at 1H (24 bars/day).
-// Weekend tracking gated on CT CME closure (same formula as above).
-// rLT/rHT: unique IDs (1H bar open time of the extreme bar).
-//   Reset to na at weekend entry. Set at weekend exit if valid.
-//   Persist through week via var. Chart detects via != lastEmitted.
-// Daily shift gated on not inW: prevents Monday's newDay from
-//   corrupting the d1-d4 window before the weekend exit filter runs.
 // ─────────────────────────────────────────────────────────────
 
 f_weekendExtremes() =>
@@ -139,7 +138,6 @@ f_weekendExtremes() =>
     var float rHP = na
     var int   rHT = na
 
-    // Weekday accumulation — skip on Monday while weekend exit is pending (inW=true)
     if nd and not isWk and not inW
         d4H := d3H
         d4L := d3L
@@ -156,7 +154,6 @@ f_weekendExtremes() =>
         cH := na(cH) ? high : math.max(cH, high)
         cL := na(cL) ? low  : math.min(cL, low)
 
-    // Weekend entry
     if isWk and not inW
         inW := true
         rLP := na
@@ -180,8 +177,6 @@ f_weekendExtremes() =>
             wL := low
             wLT := time
 
-    // Weekend tracking — CME closed only
-    // Initialize wH/wL if still na (CME was open at weekend entry)
     if isWk and inW and cmeC
         if na(wH)
             wH := high
@@ -196,7 +191,6 @@ f_weekendExtremes() =>
                 wL := low
                 wLT := time
 
-    // Weekend exit
     if not isWk and inW
         inW := false
         bool h4 = not (na(d1H) or na(d2H) or na(d3H) or na(d4H))
@@ -220,10 +214,10 @@ f_weekendExtremes() =>
     [rLP, rLT, rHP, rHT]
 
 // ─────────────────────────────────────────────────────────────
-// REQUEST AT 1H (gaps_off: last known value persists on chart)
+// REQUEST AT 1H
 // ─────────────────────────────────────────────────────────────
 
-[h1GapLvl, h1GapTyp, h1GapAnc] = request.security(
+[h1GapLvl, h1GapTyp, h1GapAnc, h1GapFlld] = request.security(
     syminfo.tickerid, "60", f_cmeGap(minGapPct), gaps=barmerge.gaps_off)
 
 [h1LowP, h1LowT, h1HighP, h1HighT] = request.security(
@@ -231,12 +225,6 @@ f_weekendExtremes() =>
 
 // ─────────────────────────────────────────────────────────────
 // EMISSION DETECTION
-//
-// Uses != lastEmitted (initialized to -1, not na).
-// Pine comparisons with na return na (falsy), not true/false.
-// Initializing to -1 avoids this: any valid timestamp != -1 = true.
-// Subsequent bars of same week: same value != same value = false. No re-emit.
-// Next cycle: new value != old value = true. Emits once.
 // ─────────────────────────────────────────────────────────────
 
 var int lastGapAnc  = -1
@@ -249,24 +237,29 @@ bool newHighEmit = isBTC   and not na(h1HighT) and h1HighT != lastHighT
 
 // ─────────────────────────────────────────────────────────────
 // LEVEL STORAGE — Weekend Extremes
+// lvlBar    : timestamp (used for stale check)
+// lvlBarIdx : bar_index (used for line drawing)
 // ─────────────────────────────────────────────────────────────
 
 var float[] lvlPrice  = array.new_float(0)
 var int[]   lvlType   = array.new_int(0)
 var int[]   lvlBar    = array.new_int(0)
+var int[]   lvlBarIdx = array.new_int(0)
 var line[]  lvlLines  = array.new_line(0)
 var label[] lvlLabels = array.new_label(0)
 
 // ─────────────────────────────────────────────────────────────
 // LEVEL STORAGE — CME Gap Fill
+// gapBar    : timestamp anchor (used to match against h1GapAnc)
+// gapBarIdx : bar_index (used for line drawing)
 // ─────────────────────────────────────────────────────────────
 
 var float[] gapPrice  = array.new_float(0)
 var int[]   gapType   = array.new_int(0)
 var int[]   gapBar    = array.new_int(0)
+var int[]   gapBarIdx = array.new_int(0)
 var line[]  gapLines  = array.new_line(0)
 var label[] gapLabels = array.new_label(0)
-var int[]   gapEmitBI = array.new_int(0)
 
 // ─────────────────────────────────────────────────────────────
 // EMIT LEVELS
@@ -277,6 +270,7 @@ if newLowEmit
     array.push(lvlPrice,  h1LowP)
     array.push(lvlType,   -1)
     array.push(lvlBar,    h1LowT)
+    array.push(lvlBarIdx, bar_index)
     array.push(lvlLines,  line(na))
     array.push(lvlLabels, label(na))
 
@@ -285,6 +279,7 @@ if newHighEmit
     array.push(lvlPrice,  h1HighP)
     array.push(lvlType,   1)
     array.push(lvlBar,    h1HighT)
+    array.push(lvlBarIdx, bar_index)
     array.push(lvlLines,  line(na))
     array.push(lvlLabels, label(na))
 
@@ -293,9 +288,9 @@ if newGapEmit
     array.push(gapPrice,  h1GapLvl)
     array.push(gapType,   h1GapTyp)
     array.push(gapBar,    h1GapAnc)
+    array.push(gapBarIdx, bar_index)
     array.push(gapLines,  line(na))
     array.push(gapLabels, label(na))
-    array.push(gapEmitBI, bar_index)
 
 // ─────────────────────────────────────────────────────────────
 // SWEEP / STALE — Weekend Extremes
@@ -326,6 +321,7 @@ if array.size(lvlPrice) > 0
             array.remove(lvlPrice,  j)
             array.remove(lvlType,   j)
             array.remove(lvlBar,    j)
+            array.remove(lvlBarIdx, j)
             array.remove(lvlLines,  j)
             array.remove(lvlLabels, j)
 
@@ -335,16 +331,15 @@ while array.size(lvlPrice) > maxExtLevels
     array.shift(lvlPrice)
     array.shift(lvlType)
     array.shift(lvlBar)
+    array.shift(lvlBarIdx)
     array.shift(lvlLines)
     array.shift(lvlLabels)
 
 // ─────────────────────────────────────────────────────────────
-// FILL — CME Gap Fill (no time expiry)
+// FILL — CME Gap Fill
 //
-// Same-bar guard: on higher timeframes (12H+), the bar that
-// emits a gap level may already contain price that crosses it.
-// Skipping fill removal on the emission bar_index prevents the
-// level from being pushed and immediately deleted in one cycle.
+// Current week's gap (anc == h1GapAnc): use 1H-detected fill (h1GapFlld).
+// Older gaps: use chart-level H/L (no same-bar concern since they're old).
 // ─────────────────────────────────────────────────────────────
 
 var bool gapFillFired = false
@@ -352,21 +347,25 @@ gapFillFired := false
 
 if array.size(gapPrice) > 0
     for j = array.size(gapPrice) - 1 to 0
-        float p      = array.get(gapPrice, j)
-        int   t      = array.get(gapType,  j)
-        int   eBI    = array.get(gapEmitBI, j)
-        bool  filled = (t ==  1 and low  <= p) or (t == -1 and high >= p)
+        float p   = array.get(gapPrice, j)
+        int   t   = array.get(gapType,  j)
+        int   anc = array.get(gapBar,   j)
 
-        if filled and bar_index > eBI
+        bool isCurrent = not na(h1GapAnc) and anc == h1GapAnc
+        bool filled = isCurrent
+             ? h1GapFlld
+             : ((t == 1 and low <= p) or (t == -1 and high >= p))
+
+        if filled
             gapFillFired := true
             line.delete( array.get(gapLines,  j))
             label.delete(array.get(gapLabels, j))
             array.remove(gapPrice,  j)
             array.remove(gapType,   j)
             array.remove(gapBar,    j)
+            array.remove(gapBarIdx, j)
             array.remove(gapLines,  j)
             array.remove(gapLabels, j)
-            array.remove(gapEmitBI, j)
 
 while array.size(gapPrice) > maxGapLevels
     line.delete( array.get(gapLines,  0))
@@ -374,9 +373,9 @@ while array.size(gapPrice) > maxGapLevels
     array.shift(gapPrice)
     array.shift(gapType)
     array.shift(gapBar)
+    array.shift(gapBarIdx)
     array.shift(gapLines)
     array.shift(gapLabels)
-    array.shift(gapEmitBI)
 
 // ─────────────────────────────────────────────────────────────
 // ALERTS
@@ -396,51 +395,51 @@ alertcondition(sweepLowFired,  "Weekend Low Swept",  "Weekend Low swept")
 alertcondition(gapFillFired,   "CME Gap Filled",     "CME Gap filled")
 
 // ─────────────────────────────────────────────────────────────
-// DRAW — Weekend Extremes
+// DRAW — Weekend Extremes (xloc.bar_index)
 // ─────────────────────────────────────────────────────────────
 
 if array.size(lvlPrice) > 0
     for j = 0 to array.size(lvlPrice) - 1
-        float p      = array.get(lvlPrice, j)
-        int   t      = array.get(lvlType,  j)
-        int   startB = array.get(lvlBar,   j)
+        float p      = array.get(lvlPrice,  j)
+        int   t      = array.get(lvlType,   j)
+        int   startI = array.get(lvlBarIdx, j)
         color col    = t == 1 ? highColor : lowColor
 
         line.delete( array.get(lvlLines,  j))
         label.delete(array.get(lvlLabels, j))
 
         array.set(lvlLines, j, line.new(
-             startB, p, startB + 86400000, p,
+             startI, p, bar_index, p,
              color=col, width=lineWidth,
              style=getLineStyle(lineStyle),
-             extend=extend.right, xloc=xloc.bar_time))
+             extend=extend.right, xloc=xloc.bar_index))
 
         if showLabels
             string lbl = t == 1 ? "Weekend High" : "Weekend Low"
             array.set(lvlLabels, j, label.new(
                  bar_index, p, lbl,
                  color=color.new(color.black, 100), textcolor=col,
-                 style=t == 1 ? label.style_label_upper_left : label.style_label_lower_left,
+                 style=t == 1 ? label.style_label_lower_left : label.style_label_upper_left,
                  size=size.small, xloc=xloc.bar_index))
 
 // ─────────────────────────────────────────────────────────────
-// DRAW — CME Gap Fill
+// DRAW — CME Gap Fill (xloc.bar_index)
 // ─────────────────────────────────────────────────────────────
 
 if showGap and array.size(gapPrice) > 0
     for j = 0 to array.size(gapPrice) - 1
-        float p      = array.get(gapPrice, j)
-        int   t      = array.get(gapType,  j)
-        int   startB = array.get(gapBar,   j)
+        float p      = array.get(gapPrice,  j)
+        int   t      = array.get(gapType,   j)
+        int   startI = array.get(gapBarIdx, j)
 
         line.delete( array.get(gapLines,  j))
         label.delete(array.get(gapLabels, j))
 
         array.set(gapLines, j, line.new(
-             startB, p, startB + 86400000, p,
+             startI, p, bar_index, p,
              color=gapColor, width=gapWidth,
              style=getLineStyle(gapStyle),
-             extend=extend.right, xloc=xloc.bar_time))
+             extend=extend.right, xloc=xloc.bar_index))
 
         if showLabels
             string lbl = "CME Gap Fill"
