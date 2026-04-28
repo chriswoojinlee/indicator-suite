@@ -8,12 +8,12 @@ indicator("Weekend Anomalies", overlay=true, max_lines_count=500, max_labels_cou
 // 2. CME GAP FILL: gap between Friday 4PM CT close and Sunday 5PM CT open
 //
 // Both features run entirely at 1H resolution via request.security functions.
-// open/close[1] inside those functions = exact 1H prices at transition bars.
 // CME gap FILL is also detected at 1H (gapFlld) to avoid same-bar ambiguity on HTF.
 // CME session defined by CT time. CME close: Fri 4:00 PM CT | CME open: Sun 5:00 PM CT.
 //
-// Lines are drawn with xloc.bar_index (not bar_time) to avoid sub-bar dx
-// rendering artifacts on HTF charts (1W/2D/3D where 1-day dx < 1 bar).
+// Lines drawn with xloc.bar_time, x1=anchor timestamp, x2=current bar time.
+//   - Avoids sub-bar dx artifacts on HTF (vertical line bug from fixed 1-day dx)
+//   - Avoids 10k-bar lookback limit of xloc.bar_index on LTF for long-lived levels
 
 // ─────────────────────────────────────────────────────────────
 // INPUTS
@@ -236,28 +236,18 @@ bool newLowEmit  = isBTC   and not na(h1LowT)  and h1LowT  != lastLowT
 bool newHighEmit = isBTC   and not na(h1HighT) and h1HighT != lastHighT
 
 // ─────────────────────────────────────────────────────────────
-// LEVEL STORAGE — Weekend Extremes
-// lvlBar    : timestamp (used for stale check)
-// lvlBarIdx : bar_index (used for line drawing)
+// LEVEL STORAGE
 // ─────────────────────────────────────────────────────────────
 
 var float[] lvlPrice  = array.new_float(0)
 var int[]   lvlType   = array.new_int(0)
 var int[]   lvlBar    = array.new_int(0)
-var int[]   lvlBarIdx = array.new_int(0)
 var line[]  lvlLines  = array.new_line(0)
 var label[] lvlLabels = array.new_label(0)
-
-// ─────────────────────────────────────────────────────────────
-// LEVEL STORAGE — CME Gap Fill
-// gapBar    : timestamp anchor (used to match against h1GapAnc)
-// gapBarIdx : bar_index (used for line drawing)
-// ─────────────────────────────────────────────────────────────
 
 var float[] gapPrice  = array.new_float(0)
 var int[]   gapType   = array.new_int(0)
 var int[]   gapBar    = array.new_int(0)
-var int[]   gapBarIdx = array.new_int(0)
 var line[]  gapLines  = array.new_line(0)
 var label[] gapLabels = array.new_label(0)
 
@@ -270,7 +260,6 @@ if newLowEmit
     array.push(lvlPrice,  h1LowP)
     array.push(lvlType,   -1)
     array.push(lvlBar,    h1LowT)
-    array.push(lvlBarIdx, bar_index)
     array.push(lvlLines,  line(na))
     array.push(lvlLabels, label(na))
 
@@ -279,7 +268,6 @@ if newHighEmit
     array.push(lvlPrice,  h1HighP)
     array.push(lvlType,   1)
     array.push(lvlBar,    h1HighT)
-    array.push(lvlBarIdx, bar_index)
     array.push(lvlLines,  line(na))
     array.push(lvlLabels, label(na))
 
@@ -288,7 +276,6 @@ if newGapEmit
     array.push(gapPrice,  h1GapLvl)
     array.push(gapType,   h1GapTyp)
     array.push(gapBar,    h1GapAnc)
-    array.push(gapBarIdx, bar_index)
     array.push(gapLines,  line(na))
     array.push(gapLabels, label(na))
 
@@ -321,7 +308,6 @@ if array.size(lvlPrice) > 0
             array.remove(lvlPrice,  j)
             array.remove(lvlType,   j)
             array.remove(lvlBar,    j)
-            array.remove(lvlBarIdx, j)
             array.remove(lvlLines,  j)
             array.remove(lvlLabels, j)
 
@@ -331,7 +317,6 @@ while array.size(lvlPrice) > maxExtLevels
     array.shift(lvlPrice)
     array.shift(lvlType)
     array.shift(lvlBar)
-    array.shift(lvlBarIdx)
     array.shift(lvlLines)
     array.shift(lvlLabels)
 
@@ -363,7 +348,6 @@ if array.size(gapPrice) > 0
             array.remove(gapPrice,  j)
             array.remove(gapType,   j)
             array.remove(gapBar,    j)
-            array.remove(gapBarIdx, j)
             array.remove(gapLines,  j)
             array.remove(gapLabels, j)
 
@@ -373,7 +357,6 @@ while array.size(gapPrice) > maxGapLevels
     array.shift(gapPrice)
     array.shift(gapType)
     array.shift(gapBar)
-    array.shift(gapBarIdx)
     array.shift(gapLines)
     array.shift(gapLabels)
 
@@ -395,24 +378,27 @@ alertcondition(sweepLowFired,  "Weekend Low Swept",  "Weekend Low swept")
 alertcondition(gapFillFired,   "CME Gap Filled",     "CME Gap filled")
 
 // ─────────────────────────────────────────────────────────────
-// DRAW — Weekend Extremes (xloc.bar_index)
+// DRAW — Weekend Extremes
+//
+// xloc.bar_time with x2=time gives a non-trivial dx on every TF
+// (avoids HTF sub-bar collapse) and has no LTF lookback limit.
 // ─────────────────────────────────────────────────────────────
 
 if array.size(lvlPrice) > 0
     for j = 0 to array.size(lvlPrice) - 1
-        float p      = array.get(lvlPrice,  j)
-        int   t      = array.get(lvlType,   j)
-        int   startI = array.get(lvlBarIdx, j)
+        float p      = array.get(lvlPrice, j)
+        int   t      = array.get(lvlType,  j)
+        int   startB = array.get(lvlBar,   j)
         color col    = t == 1 ? highColor : lowColor
 
         line.delete( array.get(lvlLines,  j))
         label.delete(array.get(lvlLabels, j))
 
         array.set(lvlLines, j, line.new(
-             startI, p, bar_index, p,
+             startB, p, time, p,
              color=col, width=lineWidth,
              style=getLineStyle(lineStyle),
-             extend=extend.right, xloc=xloc.bar_index))
+             extend=extend.right, xloc=xloc.bar_time))
 
         if showLabels
             string lbl = t == 1 ? "Weekend High" : "Weekend Low"
@@ -423,23 +409,23 @@ if array.size(lvlPrice) > 0
                  size=size.small, xloc=xloc.bar_index))
 
 // ─────────────────────────────────────────────────────────────
-// DRAW — CME Gap Fill (xloc.bar_index)
+// DRAW — CME Gap Fill
 // ─────────────────────────────────────────────────────────────
 
 if showGap and array.size(gapPrice) > 0
     for j = 0 to array.size(gapPrice) - 1
-        float p      = array.get(gapPrice,  j)
-        int   t      = array.get(gapType,   j)
-        int   startI = array.get(gapBarIdx, j)
+        float p      = array.get(gapPrice, j)
+        int   t      = array.get(gapType,  j)
+        int   startB = array.get(gapBar,   j)
 
         line.delete( array.get(gapLines,  j))
         label.delete(array.get(gapLabels, j))
 
         array.set(gapLines, j, line.new(
-             startI, p, bar_index, p,
+             startB, p, time, p,
              color=gapColor, width=gapWidth,
              style=getLineStyle(gapStyle),
-             extend=extend.right, xloc=xloc.bar_index))
+             extend=extend.right, xloc=xloc.bar_time))
 
         if showLabels
             string lbl = "CME Gap Fill"
