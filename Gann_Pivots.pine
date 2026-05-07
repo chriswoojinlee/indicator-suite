@@ -70,6 +70,17 @@ getLabelSize(string s) =>
 
 // ─────────────────────────────────────────────────────────────
 // LEVEL DESCRIPTIONS
+//
+// With levelCount = 8 the ratio values are:
+//   i=0 → 0      Midpoint
+//   ±1  → 0.125  Minor (near midpoint)
+//   ±2  → 0.25   Inner value
+//   ±3  → 0.375  Outer value (inside range, near edge)
+//   ±4  → 0.50   Range edge  (≈ anchored high / low)
+//   ±5  → 0.625  First extension (just beyond range)
+//   ±6  → 0.75   Reversal zone
+//   ±7  → 0.875  Overextended
+//   ±8  → 1.0    Ultimate S/R
 // ─────────────────────────────────────────────────────────────
 
 getLevelDescription(int idx, int total, float price, float currentClose) =>
@@ -78,27 +89,23 @@ getLevelDescription(int idx, int total, float price, float currentClose) =>
     bool isResistance = price > currentClose
 
     if idx == 0
-        desc := isResistance ? "Resistance — range midpoint" : "Support — range midpoint"
+        desc := isResistance ? "Resistance — midpoint" : "Support — midpoint"
     else if math.abs(price - currentClose) / currentClose < 0.001
         desc := "Current price pivot"
     else if ratio >= 0.95
         desc := isResistance ? "Ultimate resistance" : "Ultimate support"
     else if ratio >= 0.85
-        desc := isResistance ? "Strong resistance — overextended" : "Strong support — overextended"
+        desc := isResistance ? "Resistance — overextended" : "Support — overextended"
     else if ratio >= 0.75
-        desc := isResistance ? "Strong resistance — reversal" : "Strong support — reversal"
-    else if ratio >= 0.65
-        desc := isResistance ? "Resistance — deviation" : "Support — deviation"
+        desc := isResistance ? "Resistance — reversal" : "Support — reversal"
     else if ratio >= 0.55
-        desc := isResistance ? "Resistance — range extreme" : "Support — range extreme"
+        desc := isResistance ? "Resistance — first extension" : "Support — first extension"
     else if ratio >= 0.45
-        desc := isResistance ? "Resistance — mid-range" : "Support — mid-range"
+        desc := isResistance ? "Resistance — range edge" : "Support — range edge"
     else if ratio >= 0.35
-        desc := isResistance ? "Resistance — range boundary" : "Support — range boundary"
-    else if ratio >= 0.25
-        desc := isResistance ? "Resistance — inner range" : "Support — inner range"
-    else if ratio >= 0.15
-        desc := isResistance ? "Minor resistance — transitional" : "Minor support — transitional"
+        desc := isResistance ? "Resistance — outer value" : "Support — outer value"
+    else if ratio >= 0.20
+        desc := isResistance ? "Resistance — inner value" : "Support — inner value"
     else if ratio >= 0.10
         desc := isResistance ? "Minor resistance" : "Minor support"
     desc
