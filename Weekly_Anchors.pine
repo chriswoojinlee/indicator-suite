@@ -2,7 +2,7 @@
 // https://mozilla.org/MPL/2.0/
 
 //@version=6
-indicator("Weekend Anomalies", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("Weekly Anchors", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // 1. WEEKEND EXTREME: weekend high/low exceeding all 4 prior weekdays (cmeC phase)
 //    - Emitted as a LIVE PREVIEW during the weekend, anchored to the wick that set wH/wL
@@ -13,9 +13,23 @@ indicator("Weekend Anomalies", overlay=true, max_lines_count=500, max_labels_cou
 // 2. CME GAP FILL: gap between Friday 4PM CT close and Sunday 5PM CT open
 //    - Fill detected at 1H to avoid HTF same-bar ambiguity
 //    - Line anchors to the LAST in-session chart bar (cmeCloseBarIdx = bar_index - 1
-//      at the transition). This is the bar that contains the close moment as its
-//      right edge, which is the user's preferred visual anchor across all
-//      chart timeframes.
+//      at the transition).
+// 3. WEEKLY OPEN: open price 2 hours after CME open (Sunday 19:00 CT =
+//    start of Monday's UTC daily candle in CDT). Short-term magnet
+//    level for the trading week.
+//    - Detected at 1H: the bar opening at Sun 19:00 CT carries the
+//      weekly open price.
+//    - Persists from emission until Friday 16:00 CT CME close. NOT
+//      removed on sweep — a weekly open is repeatedly tagged through
+//      the week and remains relevant regardless of sweep status
+//      (magnet, not liquidity stop or fill target).
+//    - Anchor: at emission, compute offset from time difference and
+//      land wkOpenBarIdx on the chart bar whose span contains
+//      h1WkOpenT. Works uniformly across TFs (handles aligned 1H/1D
+//      where security emission == anchor bar, and sub-1H where the
+//      security delivers the value some number of bars late).
+//    - Label position is dynamic: appears above the line when price
+//      is below, below the line when price is above.
 //
 // All lines drawn with xloc.bar_index (capped at bar_index - 9999 to satisfy
 // Pine's lookback limit on LTF charts where the level is many bars old).
@@ -26,6 +40,7 @@ indicator("Weekend Anomalies", overlay=true, max_lines_count=500, max_labels_cou
 
 string GRP_EXT   = "Weekend Extremes"
 string GRP_GAP   = "CME Gap Fill"
+string GRP_WK    = "Weekly Open"
 string GRP_ALERT = "Alerts"
 
 highColor  = input.color(color.new(color.red,    25), "High Color",           group=GRP_EXT,  display=display.none)
@@ -39,6 +54,11 @@ gapColor   = input.color(color.new(color.yellow, 25), "Gap Color",            gr
 gapWidth   = input.int(1,  "Gap Line Width", minval=1, maxval=4,              group=GRP_GAP,  display=display.none)
 gapStyle   = input.string("Dotted", "Gap Line Style", options=["Solid","Dashed","Dotted"], group=GRP_GAP, display=display.none)
 minGapPct  = input.float(0.5, "Min Gap %", minval=0.0, step=0.1,             group=GRP_GAP,  display=display.none)
+
+showWkOpen      = input.bool(true, "Show Weekly Open Line", group=GRP_WK, display=display.none)
+wkOpenColor     = input.color(color.new(color.white, 50), "Color",            group=GRP_WK, display=display.none)
+wkOpenLineWidth = input.int(1, "Line Width", minval=1, maxval=4,              group=GRP_WK, display=display.none)
+wkOpenStyle     = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_WK, display=display.none)
 
 alertOnSweep   = input.bool(true, "Alert On Sweep",    group=GRP_ALERT, display=display.none)
 alertOnGapFill = input.bool(true, "Alert On Gap Fill", group=GRP_ALERT, display=display.none)
@@ -69,20 +89,20 @@ f_safeBI(int storedBI) =>
     math.max(storedBI, bar_index - biLookback)
 
 // ─────────────────────────────────────────────────────────────
-// CHART-SIDE CME CLOSE BAR_INDEX TRACKING
+// CHART-SIDE SESSION TRANSITION TRACKING
 //
-// The 1H security function detects the gap on Sunday CME open, by which
-// point the chart's bar_index points to Sunday — but the gap level
-// itself was set at Friday's close, many chart bars earlier.
+// cmeCloseBarIdx anchors the CME gap line to the last in-session chart
+// bar before the Friday close. fridayCloseFired distinguishes the
+// Friday CME close from daily maintenance breaks Mon–Thu (used to
+// remove the weekly open line).
 //
-// We track the chart bar_index of the LAST IN-SESSION bar before the
-// close (bar_index - 1 at the transition). This bar's right edge falls
-// at the close moment on every chart timeframe whose bars align to the
-// close, making it the consistent visual anchor.
-//
-// Daily maintenance breaks Mon–Thu also trigger this transition, but
-// they get overwritten by Friday's transition before any gap emission
-// references the value (gap emissions only happen on Sunday opens).
+// No chart-side anchor is tracked for the weekly open. Reason: on 1D+
+// in CDT, every chart bar has chartHr=19 (since 00:00 UTC = 19:00 CT
+// prev day), so a chartPostWklyOpen=(dow==1 and hr>=19) or dow>=2
+// transition tracker stays TRUE forever and never fires the false→true
+// transition. The weekly open line is anchored directly to bar_index
+// at emission — that bar already contains the weekly open moment
+// (Monday's 1D bar on 1D, Sun 19:00 CT 1H bar on 1H, etc.).
 // ─────────────────────────────────────────────────────────────
 
 int  chartDow  = dayofweek(time, "America/Chicago")
@@ -94,6 +114,8 @@ var int  cmeCloseBarIdx = na
 
 if not chartInS and chartPrevS and bar_index > 0
     cmeCloseBarIdx := bar_index - 1
+
+bool fridayCloseFired = not chartInS and chartPrevS and chartDow == 6
 
 chartPrevS := chartInS
 
@@ -242,6 +264,34 @@ f_weekendExtremes() =>
     [rHP, rHT, rLP, rLT, isWk]
 
 // ─────────────────────────────────────────────────────────────
+// 1H FUNCTION: WEEKLY OPEN DETECTION
+//
+// Fires on the first 1H bar each week where postWklyOpen becomes true.
+// postWklyOpen = (Sun >= 19:00 CT) OR Mon–Sat. Resets to false at next Sun 00:00 CT.
+// On the transition, the bar's `open` is the weekly open price.
+// Values persist via var until the next transition (next Sunday 19:00 CT).
+// ─────────────────────────────────────────────────────────────
+
+f_weeklyOpen() =>
+    int dow = dayofweek(time, "America/Chicago")
+    int hr  = hour(time,      "America/Chicago")
+
+    bool postWklyOpen = (dow == 1 and hr >= 19) or dow >= 2
+
+    var bool  prevPost  = false
+    var float wkOpen    = na
+    var int   wkOpenT   = na
+    var int   wkOpenAnc = na
+
+    if postWklyOpen and not prevPost
+        wkOpen    := open
+        wkOpenT   := time
+        wkOpenAnc := time
+
+    prevPost := postWklyOpen
+    [wkOpen, wkOpenT, wkOpenAnc]
+
+// ─────────────────────────────────────────────────────────────
 // REQUEST AT 1H
 // ─────────────────────────────────────────────────────────────
 
@@ -250,6 +300,9 @@ f_weekendExtremes() =>
 
 [h1HighP, h1HighT, h1LowP, h1LowT, h1IsWk] = request.security(
     syminfo.tickerid, "60", f_weekendExtremes(), gaps=barmerge.gaps_off)
+
+[h1WkOpenP, h1WkOpenT, h1WkOpenAnc] = request.security(
+    syminfo.tickerid, "60", f_weeklyOpen(), gaps=barmerge.gaps_off)
 
 // ─────────────────────────────────────────────────────────────
 // LEVEL STORAGE — Permanent (Weekend Extremes after promotion)
@@ -292,6 +345,16 @@ var line  previewLowLine    = na
 var label previewLowLabel   = na
 
 // ─────────────────────────────────────────────────────────────
+// LEVEL STATE — Weekly Open (single active level at a time)
+// ─────────────────────────────────────────────────────────────
+
+var float wkOpenP      = na
+var int   wkOpenT      = na
+var int   wkOpenBarIdx = na
+var line  wkOpenLine   = na
+var label wkOpenLabel  = na
+
+// ─────────────────────────────────────────────────────────────
 // WEEKEND TRANSITION DETECTION
 // ─────────────────────────────────────────────────────────────
 
@@ -319,6 +382,28 @@ if newGapEmit
     array.push(gapBarIdx, na(cmeCloseBarIdx) ? bar_index : cmeCloseBarIdx)
     array.push(gapLines,  line(na))
     array.push(gapLabels, label(na))
+
+// ─────────────────────────────────────────────────────────────
+// WEEKLY OPEN EMISSION
+// ─────────────────────────────────────────────────────────────
+
+var int lastWkOpenAnc = -1
+bool newWkOpenEmit = showWkOpen and isBTC and not na(h1WkOpenAnc) and h1WkOpenAnc != lastWkOpenAnc
+
+if newWkOpenEmit
+    lastWkOpenAnc := h1WkOpenAnc
+    wkOpenP       := h1WkOpenP
+    wkOpenT       := h1WkOpenT
+    // Compute anchor offset from emission bar back to the chart bar that
+    // contains h1WkOpenT. Works on all TFs regardless of how late the
+    // security delivers the new value: on 1D in CDT emission == anchor
+    // (offset 0), on 15m/30m/10m emission lags by various amounts and
+    // ceil((time - h1WkOpenT) / barDurMs) lands exactly on the bar
+    // whose span contains the weekly open moment.
+    int barDurMs = timeframe.in_seconds(timeframe.period) * 1000
+    float ratio  = barDurMs > 0 ? (time - h1WkOpenT) / float(barDurMs) : 0.0
+    int offset   = math.max(0, int(math.ceil(ratio)))
+    wkOpenBarIdx := math.max(0, bar_index - offset)
 
 // ─────────────────────────────────────────────────────────────
 // PREVIEW UPDATE (during weekend)
@@ -480,6 +565,18 @@ while array.size(gapPrice) > maxGapLevels
     array.shift(gapLabels)
 
 // ─────────────────────────────────────────────────────────────
+// REMOVE — Weekly Open on Friday CME close
+//
+// fridayCloseFired distinguishes Friday's CME close from daily maintenance
+// breaks on Mon–Thu (which also flip chartInS but have chartDow != 6).
+// ─────────────────────────────────────────────────────────────
+
+if fridayCloseFired and not na(wkOpenP)
+    wkOpenP      := na
+    wkOpenT      := na
+    wkOpenBarIdx := na
+
+// ─────────────────────────────────────────────────────────────
 // ALERTS
 // ─────────────────────────────────────────────────────────────
 
@@ -589,5 +686,29 @@ if showGap and array.size(gapPrice) > 0
                  color=color.new(color.black, 100), textcolor=gapColor,
                  style=t == 1 ? label.style_label_upper_left : label.style_label_lower_left,
                  size=size.small, xloc=xloc.bar_index))
+
+// ─────────────────────────────────────────────────────────────
+// DRAW — Weekly Open
+// ─────────────────────────────────────────────────────────────
+
+line.delete(wkOpenLine)
+label.delete(wkOpenLabel)
+wkOpenLine  := na
+wkOpenLabel := na
+
+if showWkOpen and not na(wkOpenP) and not na(wkOpenBarIdx)
+    int drawX1 = f_safeBI(wkOpenBarIdx)
+    int drawX2 = math.max(bar_index, drawX1 + 1)
+    wkOpenLine := line.new(
+         drawX1, wkOpenP, drawX2, wkOpenP,
+         color=wkOpenColor, width=wkOpenLineWidth,
+         style=getLineStyle(wkOpenStyle),
+         extend=extend.right, xloc=xloc.bar_index)
+    if showLabels
+        wkOpenLabel := label.new(
+             bar_index, wkOpenP, "Weekly Open",
+             color=color.new(color.black, 100), textcolor=wkOpenColor,
+             style=close < wkOpenP ? label.style_label_upper_left : label.style_label_lower_left,
+             size=size.small, xloc=xloc.bar_index)
 
 plot(na)
