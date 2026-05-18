@@ -367,6 +367,13 @@ if weekendStarted
     previewHighSwept := false
     previewLowSwept  := false
 
+// Track the time of the last extreme that's been promoted to permanent
+// storage (or swept during preview). Used by the catch-up emission
+// path below to avoid double-emitting levels the preview path already
+// handled.
+var int lastEmittedHighT = -1
+var int lastEmittedLowT  = -1
+
 // ─────────────────────────────────────────────────────────────
 // CME GAP EMISSION (anchored to last in-session bar)
 // ─────────────────────────────────────────────────────────────
@@ -429,6 +436,7 @@ if isBTC and h1IsWk
     if not previewHighSwept and not na(previewHighP) and high > previewHighP
         previewHighSwept  := true
         sweepHighFired    := true
+        lastEmittedHighT  := previewHighT
         previewHighP      := na
         previewHighT      := na
         previewHighBarIdx := na
@@ -447,6 +455,7 @@ if isBTC and h1IsWk
     if not previewLowSwept and not na(previewLowP) and low < previewLowP
         previewLowSwept  := true
         sweepLowFired    := true
+        lastEmittedLowT  := previewLowT
         previewLowP      := na
         previewLowT      := na
         previewLowBarIdx := na
@@ -463,6 +472,7 @@ if weekendEnded and isBTC
         array.push(lvlBarIdx, previewHighBarIdx)
         array.push(lvlLines,  line(na))
         array.push(lvlLabels, label(na))
+        lastEmittedHighT := previewHighT
 
     if not previewLowSwept and not na(previewLowP) and not na(previewLowT) and not na(previewLowBarIdx)
         array.push(lvlPrice,  previewLowP)
@@ -471,6 +481,7 @@ if weekendEnded and isBTC
         array.push(lvlBarIdx, previewLowBarIdx)
         array.push(lvlLines,  line(na))
         array.push(lvlLabels, label(na))
+        lastEmittedLowT := previewLowT
 
     line.delete(previewHighLine)
     label.delete(previewHighLabel)
@@ -486,6 +497,51 @@ if weekendEnded and isBTC
     previewLowP       := na
     previewLowT       := na
     previewLowBarIdx  := na
+
+// ─────────────────────────────────────────────────────────────
+// WEEKEND EXTREME CATCH-UP EMISSION
+//
+// Chart timeframes with limited history (1m, 5m, 15m, 30m) often don't
+// include the weekend bars at all. The preview→promotion path above
+// requires h1IsWk to transition true→false on a visible chart bar,
+// which never happens if h1IsWk is already false at chart start —
+// so no level gets added.
+//
+// This catch-up path emits a permanent level whenever the 1H security
+// reports an extreme that hasn't been emitted yet (via the preview
+// path or a previous catch-up). Skipped during weekends to avoid
+// colliding with the live preview. The anchor is computed from
+// (time - h1HighT) / barDurMs, same formula as the weekly open, so
+// the level lands on the chart bar whose span contains the wick that
+// set the extreme.
+// ─────────────────────────────────────────────────────────────
+
+if isBTC and not h1IsWk
+    int barDurMsExt = timeframe.in_seconds(timeframe.period) * 1000
+
+    if not na(h1HighT) and h1HighT != lastEmittedHighT
+        lastEmittedHighT := h1HighT
+        float ratioH    = barDurMsExt > 0 ? (time - h1HighT) / float(barDurMsExt) : 0.0
+        int   offsetH   = math.max(0, int(math.ceil(ratioH)))
+        int   anchorH   = math.max(0, bar_index - offsetH)
+        array.push(lvlPrice,  h1HighP)
+        array.push(lvlType,   1)
+        array.push(lvlBar,    h1HighT)
+        array.push(lvlBarIdx, anchorH)
+        array.push(lvlLines,  line(na))
+        array.push(lvlLabels, label(na))
+
+    if not na(h1LowT) and h1LowT != lastEmittedLowT
+        lastEmittedLowT := h1LowT
+        float ratioL    = barDurMsExt > 0 ? (time - h1LowT) / float(barDurMsExt) : 0.0
+        int   offsetL   = math.max(0, int(math.ceil(ratioL)))
+        int   anchorL   = math.max(0, bar_index - offsetL)
+        array.push(lvlPrice,  h1LowP)
+        array.push(lvlType,   -1)
+        array.push(lvlBar,    h1LowT)
+        array.push(lvlBarIdx, anchorL)
+        array.push(lvlLines,  line(na))
+        array.push(lvlLabels, label(na))
 
 // ─────────────────────────────────────────────────────────────
 // SWEEP / STALE — Permanent Weekend Extremes
@@ -708,7 +764,7 @@ if showWkOpen and not na(wkOpenP) and not na(wkOpenBarIdx)
         wkOpenLabel := label.new(
              bar_index, wkOpenP, "Weekly Open",
              color=color.new(color.black, 100), textcolor=wkOpenColor,
-             style=close < wkOpenP ? label.style_label_upper_left : label.style_label_lower_left,
+             style=close < wkOpenP ? label.style_label_lower_left : label.style_label_upper_left,
              size=size.small, xloc=xloc.bar_index)
 
 plot(na)

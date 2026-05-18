@@ -8,33 +8,26 @@ indicator("Gann Pivots", overlay=true, max_lines_count=500, max_labels_count=500
 // INPUTS
 // ─────────────────────────────────────────────────────────────
 
-string GRP_CORE   = "Core Settings"
-string GRP_ANCHOR = "Range Anchoring"
+string GRP_ANCHOR = "Anchor"
 string GRP_STYLE  = "Visual Style"
 string GRP_LABELS = "Labels"
 
-// --- Core ---
-showMinorLevels = input.bool(true, "Show Minor Levels", group=GRP_CORE, display=display.none,
-     tooltip="Toggle thinner intermediate levels.")
+// --- Anchor ---
+manualHigh = input.float(0.0, "Range High", minval=0.0, group=GRP_ANCHOR, display=display.none,
+     tooltip="High of your structural range.")
+manualLow  = input.float(0.0, "Range Low", minval=0.0, group=GRP_ANCHOR, display=display.none,
+     tooltip="Low of your structural range.")
 
-// --- Anchor Mode ---
-anchorMode = input.string("Rolling", "Anchor Mode", options=["Rolling", "Manual"], group=GRP_ANCHOR, display=display.none,
-     tooltip="Rolling: recalculates every bar from lookback window (adaptive, some level drift).\nManual: uses your specified high/low inputs (fully static, requires your structural judgment).")
-
-manualHigh = input.float(0.0, "Manual Range High", minval=0.0, group=GRP_ANCHOR, display=display.none,
-     tooltip="Only used in Manual mode. Set to the high of your structural range.")
-manualLow  = input.float(0.0, "Manual Range Low", minval=0.0, group=GRP_ANCHOR, display=display.none,
-     tooltip="Only used in Manual mode. Set to the low of your structural range.")
+levelMode = input.string("9", "Levels", options=["5", "9"], group=GRP_ANCHOR, display=display.none,
+     tooltip="5: RM, RL, RH, and two extremes.\n9: adds quarter and extension levels between those.")
 
 // --- Style ---
-extendLevels = input.bool(true, "Extend Lines", group=GRP_STYLE, display=display.none)
-majorColor   = input.color(color.new(color.white, 25), "Major Level Color", group=GRP_STYLE, display=display.none)
-minorColor   = input.color(color.new(color.white, 70), "Minor Level Color", group=GRP_STYLE, display=display.none)
-extremeColor = input.color(color.new(color.white, 0), "Extreme Level Color", group=GRP_STYLE, display=display.none)
-pivotColor   = input.color(color.new(color.white, 0), "Pivot Level Color", group=GRP_STYLE, display=display.none)
-majorWidth   = input.int(2, "Major Line Width", minval=1, maxval=4, group=GRP_STYLE, display=display.none)
-minorWidth   = input.int(1, "Minor Line Width", minval=1, maxval=4, group=GRP_STYLE, display=display.none)
-lineStyle    = input.string("Dotted", "Line Style", options=["Solid", "Dashed", "Dotted"], group=GRP_STYLE, display=display.none)
+extendLevels  = input.bool(true, "Extend Lines", group=GRP_STYLE, display=display.none)
+baseColor     = input.color(color.new(color.white, 25), "Level Color", group=GRP_STYLE, display=display.none)
+boundaryColor = input.color(color.new(color.white, 0), "Boundary / Extreme Color", group=GRP_STYLE, display=display.none)
+midpointColor = input.color(color.new(color.white, 0), "Midpoint Color", group=GRP_STYLE, display=display.none)
+lineWidth     = input.int(2, "Line Width", minval=1, maxval=4, group=GRP_STYLE, display=display.none)
+lineStyle     = input.string("Dotted", "Line Style", options=["Solid", "Dashed", "Dotted"], group=GRP_STYLE, display=display.none)
 
 // --- Labels ---
 showLabels       = input.bool(true, "Show Labels", group=GRP_LABELS, display=display.none)
@@ -44,13 +37,10 @@ labelOffset      = input.int(20, "Label Offset (bars)", minval=1, maxval=100, gr
 showBarMarkers   = input.bool(true, "Show Current Bar Markers", group=GRP_LABELS, display=display.none)
 
 // ─────────────────────────────────────────────────────────────
-// HARDCODED CONSTANTS
+// DERIVED
 // ─────────────────────────────────────────────────────────────
 
-int levelCount = 8
-
-// Auto lookback: 500 for H6 and below, 250 for daily, 120 for multi-day
-int autoLookback = timeframe.in_seconds() <= 21600 ? 500 : timeframe.in_seconds() <= 86400 ? 250 : 120
+int subdivisions = levelMode == "5" ? 2 : 4
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS
@@ -69,72 +59,64 @@ getLabelSize(string s) =>
         => size.normal
 
 // ─────────────────────────────────────────────────────────────
-// LEVEL DESCRIPTIONS
+// LEVEL NAMES
 //
-// With levelCount = 8 the ratio values are:
-//   i=0 → 0      Midpoint
-//   ±1  → 0.125  Minor (near midpoint)
-//   ±2  → 0.25   Inner value
-//   ±3  → 0.375  Outer value (inside range, near edge)
-//   ±4  → 0.50   Range edge  (≈ anchored high / low)
-//   ±5  → 0.625  First extension (just beyond range)
-//   ±6  → 0.75   Reversal zone
-//   ±7  → 0.875  Overextended
-//   ±8  → 1.0    Ultimate S/R
+// 9 levels (subdivisions = 4):
+//   i=+4   extreme        (furthest extension above range)
+//   i=+3   extension      (first level beyond RH)
+//   i=+2   RH             (≈ anchored high)
+//   i=+1   quarter        (between RM and RH)
+//   i= 0   RM             (range midpoint)
+//   i=-1   quarter        (between RM and RL)
+//   i=-2   RL             (≈ anchored low)
+//   i=-3   extension      (first level beyond RL)
+//   i=-4   extreme        (furthest extension below range)
+//
+// 5 levels (subdivisions = 2):
+//   i=+2   extreme
+//   i=+1   RH
+//   i= 0   RM
+//   i=-1   RL
+//   i=-2   extreme
 // ─────────────────────────────────────────────────────────────
 
 getLevelDescription(int idx, int total, float price, float currentClose) =>
     string desc = ""
-    float ratio = total > 0 ? math.abs(idx) / total : 0.0
-    bool isResistance = price > currentClose
+    string side = price > currentClose ? "R" : "S"
 
     if idx == 0
-        desc := isResistance ? "Resistance — midpoint" : "Support — midpoint"
-    else if math.abs(price - currentClose) / currentClose < 0.001
-        desc := "Current price pivot"
-    else if ratio >= 0.95
-        desc := isResistance ? "Ultimate resistance" : "Ultimate support"
-    else if ratio >= 0.85
-        desc := isResistance ? "Resistance — overextended" : "Support — overextended"
-    else if ratio >= 0.75
-        desc := isResistance ? "Resistance — reversal" : "Support — reversal"
-    else if ratio >= 0.55
-        desc := isResistance ? "Resistance — first extension" : "Support — first extension"
-    else if ratio >= 0.45
-        desc := isResistance ? "Resistance — range edge" : "Support — range edge"
-    else if ratio >= 0.35
-        desc := isResistance ? "Resistance — outer value" : "Support — outer value"
-    else if ratio >= 0.20
-        desc := isResistance ? "Resistance — inner value" : "Support — inner value"
-    else if ratio >= 0.10
-        desc := isResistance ? "Minor resistance" : "Minor support"
+        desc := side + " — RM"
+    else
+        float ratio = total > 0 ? math.abs(idx) / total : 0.0
+        bool isPositive = idx > 0
+
+        if ratio >= 0.99
+            // Extreme: outermost level
+            desc := side + " — Extreme"
+        else if math.abs(ratio - 0.5) < 0.01
+            // Range boundary: ≈ anchored high or low
+            desc := side + (isPositive ? " — RH" : " — RL")
+        else if ratio > 0.5
+            // Beyond range boundary
+            desc := side + " — Extension"
+        else
+            // Between midpoint and boundary
+            desc := side + " — Quarter"
     desc
 
 // ─────────────────────────────────────────────────────────────
-// RANGE DETECTION
+// RANGE & SQRT CALCULATION
 // ─────────────────────────────────────────────────────────────
 
-int safeLb        = math.max(1, math.min(autoLookback, bar_index + 1))
-float rollingHigh = ta.highest(high, safeLb)
-float rollingLow  = ta.lowest(low, safeLb)
-
-float rangeHigh = anchorMode == "Manual" and manualHigh > 0 ? manualHigh : rollingHigh
-float rangeLow  = anchorMode == "Manual" and manualLow > 0  ? manualLow  : rollingLow
-
-float finalHigh = math.max(rangeHigh, rangeLow)
-float finalLow  = math.min(rangeHigh, rangeLow)
-
+float finalHigh = math.max(manualHigh, manualLow)
+float finalLow  = math.min(manualHigh, manualLow)
 float midPrice  = (finalHigh + finalLow) / 2.0
 float rangeSize = finalHigh - finalLow
 
-// ─────────────────────────────────────────────────────────────
-// SQRT INCREMENT CALCULATION
-// ─────────────────────────────────────────────────────────────
-
-float sqrtHigh      = math.sqrt(finalHigh)
-float sqrtLow       = math.sqrt(finalLow)
-float sqrtRange     = sqrtHigh - sqrtLow
-float increment     = levelCount > 0 ? sqrtRange / levelCount : 1.0
+float sqrtHigh  = math.sqrt(finalHigh)
+float sqrtLow   = math.sqrt(finalLow)
+float sqrtRange = sqrtHigh - sqrtLow
+float increment = subdivisions > 0 ? sqrtRange / subdivisions : 1.0
 
 // ─────────────────────────────────────────────────────────────
 // DRAWING
@@ -144,7 +126,7 @@ var line[]  drawnLines   = array.new_line(0)
 var label[] drawnLabels  = array.new_label(0)
 var line[]  drawnMarkers = array.new_line(0)
 
-if barstate.islast and not na(finalHigh) and not na(finalLow) and rangeSize > 0
+if barstate.islast and manualHigh > 0 and manualLow > 0 and rangeSize > 0
 
     // --- Cleanup ---
     if array.size(drawnLines) > 0
@@ -166,53 +148,47 @@ if barstate.islast and not na(finalHigh) and not na(finalLow) and rangeSize > 0
     float sqrtMid      = math.sqrt(midPrice)
     float currentClose = close
 
-    int lineStart = bar_index - math.min(safeLb, 500)
+    int lineStart = bar_index - 500
     int lineEnd   = bar_index + 50
 
-    string lvlExtend = extendLevels ? "both" : "none"
-
-    for i = -levelCount to levelCount
+    for i = -subdivisions to subdivisions
         float sqrtLevel = sqrtMid + (i * increment)
         if sqrtLevel > 0
-            float price    = sqrtLevel * sqrtLevel
-            float ratio    = i == 0 ? 0.0 : math.abs(i) / levelCount
-            bool isPivot   = i == 0
-            bool isExtreme = ratio >= 0.85
-            bool isMajor   = isPivot or ratio >= 0.35
-            bool isSkipped = ratio < 0.10 and i != 0
-            bool shouldDraw = (isMajor or showMinorLevels) and not isSkipped
+            float price = sqrtLevel * sqrtLevel
+            float ratio = i == 0 ? 0.0 : math.abs(i) / subdivisions
+            bool isPivot    = i == 0
+            bool isBoundary = math.abs(ratio - 0.5) < 0.01
+            bool isExtreme  = ratio >= 0.99
+            bool isR        = price > currentClose
 
-            if shouldDraw
-                bool isResistance = price > currentClose
+            color lineCol = isPivot ? midpointColor : (isBoundary or isExtreme ? boundaryColor : baseColor)
+            int lineW     = isPivot ? lineWidth + 1 : lineWidth
 
-                color lineCol = isPivot ? pivotColor : (isExtreme ? extremeColor : (isMajor ? majorColor : minorColor))
-                int lineW     = isPivot ? majorWidth + 1 : (isMajor ? majorWidth : minorWidth)
+            // Main level line
+            array.push(drawnLines, line.new(
+                 lineStart, price,
+                 lineEnd, price,
+                 color=lineCol, width=lineW,
+                 style=getLineStyle(lineStyle),
+                 extend=extendLevels ? extend.both : extend.none))
 
-                // Main level line
-                array.push(drawnLines, line.new(
-                     lineStart, price,
-                     lineEnd, price,
-                     color=lineCol, width=lineW,
-                     style=getLineStyle(lineStyle),
-                     extend=lvlExtend == "both" ? extend.both : extend.none))
+            // Current bar marker
+            if showBarMarkers
+                array.push(drawnMarkers, line.new(
+                     bar_index, price,
+                     bar_index + 1, price,
+                     color=lineCol, width=lineW + 1,
+                     style=line.style_solid))
 
-                // Current bar marker
-                if showBarMarkers
-                    array.push(drawnMarkers, line.new(
-                         bar_index, price,
-                         bar_index + 1, price,
-                         color=lineCol, width=lineW + 1,
-                         style=line.style_solid))
+            // Label
+            if showLabels
+                string desc = getLevelDescription(i, subdivisions, price, currentClose)
 
-                // Label
-                if showLabels
-                    string desc = getLevelDescription(i, levelCount, price, currentClose)
+                if desc != ""
+                    string txt = showPriceInLabel ? "● " + desc + "  " + str.tostring(price, format.mintick) + " ●" : "● " + desc + " ●"
 
-                    if desc != ""
-                        string txt = showPriceInLabel ? "● " + desc + "  " + str.tostring(price, format.mintick) + " ●" : "● " + desc + " ●"
-
-                        array.push(drawnLabels, label.new(
-                             bar_index + labelOffset, price, txt,
-                             color=color.new(color.black, 100), textcolor=lineCol,
-                             style=isResistance ? label.style_label_lower_left : label.style_label_upper_left,
-                             size=getLabelSize(labelSize)))
+                    array.push(drawnLabels, label.new(
+                         bar_index + labelOffset, price, txt,
+                         color=color.new(color.black, 100), textcolor=lineCol,
+                         style=isR ? label.style_label_lower_left : label.style_label_upper_left,
+                         size=getLabelSize(labelSize)))
