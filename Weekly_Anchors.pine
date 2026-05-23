@@ -664,8 +664,10 @@ previewLowLabel  := na
 
 if h1IsWk and isBTC
     if not na(previewHighP) and not na(previewHighBarIdx)
+        int prevHX1 = f_safeBI(previewHighBarIdx)
+        int prevHX2 = math.max(bar_index, prevHX1 + 1)
         previewHighLine := line.new(
-             f_safeBI(previewHighBarIdx), previewHighP, bar_index, previewHighP,
+             prevHX1, previewHighP, prevHX2, previewHighP,
              color=highColor, width=lineWidth,
              style=getLineStyle(lineStyle),
              extend=extend.right, xloc=xloc.bar_index)
@@ -677,8 +679,10 @@ if h1IsWk and isBTC
                  size=size.small, xloc=xloc.bar_index)
 
     if not na(previewLowP) and not na(previewLowBarIdx)
+        int prevLX1 = f_safeBI(previewLowBarIdx)
+        int prevLX2 = math.max(bar_index, prevLX1 + 1)
         previewLowLine := line.new(
-             f_safeBI(previewLowBarIdx), previewLowP, bar_index, previewLowP,
+             prevLX1, previewLowP, prevLX2, previewLowP,
              color=lowColor, width=lineWidth,
              style=getLineStyle(lineStyle),
              extend=extend.right, xloc=xloc.bar_index)
@@ -703,8 +707,10 @@ if array.size(lvlPrice) > 0
         line.delete( array.get(lvlLines,  j))
         label.delete(array.get(lvlLabels, j))
 
+        int extX1 = f_safeBI(startI)
+        int extX2 = math.max(bar_index, extX1 + 1)
         array.set(lvlLines, j, line.new(
-             f_safeBI(startI), p, bar_index, p,
+             extX1, p, extX2, p,
              color=col, width=lineWidth,
              style=getLineStyle(lineStyle),
              extend=extend.right, xloc=xloc.bar_index))
