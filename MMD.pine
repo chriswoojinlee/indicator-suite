@@ -1,115 +1,285 @@
 // This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
 
 //@version=5
-indicator("BTC/ETH MMD", "BTC/ETH MMD", overlay = true, max_lines_count = 500, max_labels_count = 500)
-//------------------------------------------------------------------------------
-//Settings
-//-----------------------------------------------------------------------------{
-length = input.int(3, 'Pivot Lookback', minval = 2)
-sym_btc = input.symbol('BINANCE:BTCUSDT.P', 'BTC Symbol')
-sym_eth = input.symbol('BINANCE:ETHUSDT.P', 'ETH Symbol')
+indicator("Multi-Asset MMD", "MMD", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
-//Style
-bullDivCss = input.color(color.red, 'Strong Bear (Swing High)', group = 'Style')
-bearDivCss = input.color(color.green, 'Strong Bull (Swing Low)', group = 'Style')
+// =========================================================================
+// INPUTS
+// =========================================================================
+length     = input.int(3,     'Confirmed pivot lookback',          minval = 2, group = 'Pivot Settings')
+showEarly  = input.bool(false,'Plot tentative (early) signals',    group = 'Pivot Settings', tooltip = 'Off by default. Tentatives auto-purge when invalidated by subsequent price action or after `Confirmed lookback` bars.')
+earlyLen   = input.int(1,     'Tentative pivot lookback',          minval = 1, group = 'Pivot Settings')
+maxTent    = input.int(30,    'Max tentative drawings retained',   minval = 5, maxval = 100, group = 'Pivot Settings')
 
-//-----------------------------------------------------------------------------}
-// Check if current chart is BTC/ETH
-//-----------------------------------------------------------------------------{
-isBTC = str.contains(syminfo.ticker, "BTC") or str.contains(syminfo.basecurrency, "BTC")
-isETH = str.contains(syminfo.ticker, "ETH") or str.contains(syminfo.basecurrency, "ETH")
-isValidPair = isBTC or isETH
+showStrong = input.bool(true,  'Strong (opposite directions: HH/LH or HL/LL split)', group = 'Divergence Types')
+showEqual  = input.bool(false, 'Equal-level (one breaks prior pivot, other prints equal)', group = 'Divergence Types')
 
-//-----------------------------------------------------------------------------}
-//Function
-//-----------------------------------------------------------------------------{
+minGap     = input.int(3, 'Min bars between confirmed signals (same side)', minval = 0, group = 'Filters')
+
+g1A = input.symbol('BINANCE:BTCUSDT.P', 'Asset A', group = 'Symbols - Crypto (BTC vs ETH)')
+g1B = input.symbol('BINANCE:ETHUSDT.P', 'Asset B', group = 'Symbols - Crypto (BTC vs ETH)')
+
+g2A = input.symbol('COMEX:GC1!',        'Asset A', group = 'Symbols - Metals (Gold vs Silver)')
+g2B = input.symbol('COMEX:SI1!',        'Asset B', group = 'Symbols - Metals (Gold vs Silver)')
+
+g3A = input.symbol('CME_MINI:ES1!',     'Asset A', group = 'Symbols - Indices (S&P vs Nasdaq)')
+g3B = input.symbol('CME_MINI:NQ1!',     'Asset B', group = 'Symbols - Indices (S&P vs Nasdaq)')
+
+cStrBear = input.color(color.red,    'Strong Bear (swing high)', group = 'Style')
+cStrBull = input.color(color.green,  'Strong Bull (swing low)',  group = 'Style')
+cEqBear  = input.color(color.orange, 'Equal Bear',               group = 'Style')
+cEqBull  = input.color(color.lime,   'Equal Bull',               group = 'Style')
+earlyT   = input.int(70, 'Tentative line transparency', minval = 0, maxval = 90, group = 'Style')
+
+// =========================================================================
+// ASSET-GROUP DETECTION
+// =========================================================================
+hit3(needle) =>
+    T = str.upper(syminfo.ticker)
+    B = str.upper(syminfo.basecurrency)
+    F = str.upper(syminfo.tickerid)
+    str.contains(T, needle) or str.contains(B, needle) or str.contains(F, needle)
+
+isBTC    = hit3('BTC')    or hit3('XBT')    or hit3('BITCOIN')
+isETH    = hit3('ETH')    or hit3('ETHEREUM')
+isGold   = hit3('GOLD')   or hit3('XAU')    or hit3('GC1!') or hit3('GC2!') or hit3('GLD')   or hit3('XAUT')   or hit3('PAXG') or hit3('IAU')
+isSilver = hit3('SILVER') or hit3('XAG')    or hit3('SI1!') or hit3('SI2!') or hit3('SLV')   or hit3('PSLV')
+isSPX    = hit3('SPX')    or hit3('SPY')    or hit3('ES1!') or hit3('ES2!') or hit3('US500') or hit3('SP500')  or hit3('VOO')  or hit3('IVV')
+isNDX    = hit3('NDX')    or hit3('NQ1!')   or hit3('NQ2!') or hit3('QQQ')  or hit3('US100') or hit3('NAS100') or hit3('NDQ')
+
+isCrypto  = isBTC  or isETH
+isMetals  = isGold or isSilver
+isIndices = isSPX  or isNDX
+isValid   = isCrypto or isMetals or isIndices
+
+// =========================================================================
+// EXTERNAL DATA
+// =========================================================================
+[hA1, lA1] = request.security(g1A, timeframe.period, [high, low])
+[hB1, lB1] = request.security(g1B, timeframe.period, [high, low])
+[hA2, lA2] = request.security(g2A, timeframe.period, [high, low])
+[hB2, lB2] = request.security(g2B, timeframe.period, [high, low])
+[hA3, lA3] = request.security(g3A, timeframe.period, [high, low])
+[hB3, lB3] = request.security(g3B, timeframe.period, [high, low])
+
+hA = isCrypto ? hA1 : isMetals ? hA2 : isIndices ? hA3 : float(na)
+lA = isCrypto ? lA1 : isMetals ? lA2 : isIndices ? lA3 : float(na)
+hB = isCrypto ? hB1 : isMetals ? hB2 : isIndices ? hB3 : float(na)
+lB = isCrypto ? lB1 : isMetals ? lB2 : isIndices ? lB3 : float(na)
+
+// =========================================================================
+// PIVOTS
+// =========================================================================
+phC  = fixnan(ta.pivothigh(length, length))
+plC  = fixnan(ta.pivotlow(length, length))
+phAC = fixnan(ta.pivothigh(hA, length, length))
+plAC = fixnan(ta.pivotlow(lA, length, length))
+phBC = fixnan(ta.pivothigh(hB, length, length))
+plBC = fixnan(ta.pivotlow(lB, length, length))
+
+phE  = fixnan(ta.pivothigh(earlyLen, earlyLen))
+plE  = fixnan(ta.pivotlow(earlyLen, earlyLen))
+phAE = fixnan(ta.pivothigh(hA, earlyLen, earlyLen))
+plAE = fixnan(ta.pivotlow(lA, earlyLen, earlyLen))
+phBE = fixnan(ta.pivothigh(hB, earlyLen, earlyLen))
+plBE = fixnan(ta.pivotlow(lB, earlyLen, earlyLen))
+
+// =========================================================================
+// CLASSIFIER
+// =========================================================================
+classify(aC, aP, bC, bP) =>
+    aDir = aC > aP ? 1 : aC < aP ? -1 : 0
+    bDir = bC > bP ? 1 : bC < bP ? -1 : 0
+    cls = 0
+    if aDir * bDir == -1
+        cls := 1
+    else if (aDir != 0 and bDir == 0) or (aDir == 0 and bDir != 0)
+        cls := 2
+    cls
+
+// =========================================================================
+// DRAWING HELPERS (confirmed)
+// =========================================================================
 n = bar_index
 
-get_hl() => [high, low, close]
+drawHighC(b1, p1, b2, p2, cls) =>
+    base = cls == 1 ? cStrBear : cEqBear
+    sty  = cls == 1 ? line.style_solid : line.style_dashed
+    wid  = cls == 1 ? 2 : 1
+    line.new(b1, p1, b2, p2, color = base, width = wid, style = sty)
+    label.new(b2, p2, cls == 1 ? 'MMD' : 'mmd', color = base, style = label.style_label_down, textcolor = color.white, size = size.small)
 
-//Detect strong divergences only
-get_strong_divergence(ph, y2, btc_y2, eth_y2, css)=>
-    var float y1 = na
-    var float btc_y1 = na
-    var float eth_y1 = na
-    var int x1 = na
-    var strong_mmd = 0
+drawLowC(b1, p1, b2, p2, cls) =>
+    base = cls == 1 ? cStrBull : cEqBull
+    sty  = cls == 1 ? line.style_solid : line.style_dashed
+    wid  = cls == 1 ? 2 : 1
+    line.new(b1, p1, b2, p2, color = base, width = wid, style = sty)
+    label.new(b2, p2, cls == 1 ? 'MMD' : 'mmd', color = base, style = label.style_label_up, textcolor = color.white, size = size.small)
 
-    if y2 != y2[1] and btc_y2 != btc_y2[1] and eth_y2 != eth_y2[1]
-        // For pivot HIGHS (bearish): BTC makes LH while ETH makes HH
-        if ph
-            btc_lower = btc_y2 < btc_y1  // BTC making lower high
-            eth_higher = eth_y2 > eth_y1  // ETH making higher high
-            
-            if btc_lower and eth_higher
-                line.new(n[length], y2, x1, y1, color = css)
-                strong_mmd += 1
-        
-        // For pivot LOWS (bullish): BTC makes HL while ETH makes LL
-        else
-            btc_higher = btc_y2 > btc_y1  // BTC making higher low
-            eth_lower = eth_y2 < eth_y1   // ETH making lower low
-            
-            if btc_higher and eth_lower
-                line.new(n[length], y2, x1, y1, color = css)
-                strong_mmd += 1
-        
-        btc_y1 := btc_y2
-        eth_y1 := eth_y2
-        y1 := y2
-        x1 := n[length]
-    else if (ph and y2 > y2[1]) or (not ph and y2 < y2[1])
-        btc_y1 := na
-        eth_y1 := na
-        y1 := y2
-        x1 := n[length]
-    
-    strong_mmd
+// Tentative drawings return [line, label, pivotBar, pivotPrice, isHigh]
+// stored in parallel arrays for invalidation tracking.
+drawTent(b1, p1, b2, p2, cls, isHigh) =>
+    base = isHigh ? (cls == 1 ? cStrBear : cEqBear) : (cls == 1 ? cStrBull : cEqBull)
+    css  = color.new(base, earlyT)
+    ln   = line.new(b1, p1, b2, p2, color = css, width = 1, style = line.style_dotted)
+    lb   = label.new(b2, p2, (cls == 1 ? 'MMD' : 'mmd') + '?', color = css, style = isHigh ? label.style_label_down : label.style_label_up, textcolor = color.white, size = size.tiny)
+    [ln, lb]
 
-//-----------------------------------------------------------------------------}
-//Main variables
-//-----------------------------------------------------------------------------{
-var phN = 0, var plN = 0
-var ph_strong_mmd = 0.
-var pl_strong_mmd = 0.
+// =========================================================================
+// STATE - confirmed
+// =========================================================================
+var float prevPH    = na
+var float prevPHA   = na
+var float prevPHB   = na
+var int   prevPHbar = na
+var int   lastHsig  = na
 
-//-----------------------------------------------------------------------------}
-//Get BTC and ETH data
-//-----------------------------------------------------------------------------{
-[h_btc, l_btc, c_btc] = request.security(sym_btc, timeframe.period, get_hl())
-[h_eth, l_eth, c_eth] = request.security(sym_eth, timeframe.period, get_hl())
+var float prevPL    = na
+var float prevPLA   = na
+var float prevPLB   = na
+var int   prevPLbar = na
+var int   lastLsig  = na
 
-//-----------------------------------------------------------------------------}
-//Detect swing highs/lows and strong divergences
-//-----------------------------------------------------------------------------{
-if isValidPair
-    ph = fixnan(ta.pivothigh(length, length))
-    pl = fixnan(ta.pivotlow(length, length))
-    phN += ph != ph[1] ? 1 : 0
-    plN += pl != pl[1] ? 1 : 0
+// =========================================================================
+// STATE - tentative (for invalidation)
+// =========================================================================
+var float prevPHe    = na
+var float prevPHAe   = na
+var float prevPHBe   = na
+var int   prevPHbarE = na
 
-    // Calculate BTC and ETH pivots
-    btc_ph = fixnan(ta.pivothigh(h_btc, length, length))
-    btc_pl = fixnan(ta.pivotlow(l_btc, length, length))
-    
-    eth_ph = fixnan(ta.pivothigh(h_eth, length, length))
-    eth_pl = fixnan(ta.pivotlow(l_eth, length, length))
+var float prevPLe    = na
+var float prevPLAe   = na
+var float prevPLBe   = na
+var int   prevPLbarE = na
 
-    // Detect strong divergences
-    ph_strong_mmd := get_strong_divergence(true, ph, btc_ph, eth_ph, bullDivCss)
-    pl_strong_mmd := get_strong_divergence(false, pl, btc_pl, eth_pl, bearDivCss)
+// Parallel arrays: each tentative drawing's line, label, pivot bar, pivot price, age
+var line[]  tLines  = array.new<line>()
+var label[] tLabels = array.new<label>()
+var int[]   tBars   = array.new<int>()
+var float[] tPrices = array.new<float>()
+var int[]   tBorn   = array.new<int>()
+var bool[]  tIsHigh = array.new<bool>()
 
-    // Create labels
-    if ph != ph[1] and ph_strong_mmd > ph_strong_mmd[1]
-        label.new(n[length], ph, 'MMD'
-          , color = bullDivCss
-          , style = label.style_label_down
-          , textcolor = color.white
-          , size = size.small)
-    
-    if pl != pl[1] and pl_strong_mmd > pl_strong_mmd[1]
-        label.new(n[length], pl, 'MMD'
-          , color = bearDivCss
-          , style = label.style_label_up
-          , textcolor = color.white
-          , size = size.small)
+var bool sigBearH_conf = false
+var bool sigBullL_conf = false
+sigBearH_conf := false
+sigBullL_conf := false
+
+// Helper: remove tentative at index
+removeTent(i) =>
+    line.delete(array.get(tLines, i))
+    label.delete(array.get(tLabels, i))
+    array.remove(tLines,  i)
+    array.remove(tLabels, i)
+    array.remove(tBars,   i)
+    array.remove(tPrices, i)
+    array.remove(tBorn,   i)
+    array.remove(tIsHigh, i)
+
+// =========================================================================
+// INVALIDATE TENTATIVES
+// A tentative high is invalidated if any subsequent high exceeds its pivot price.
+// A tentative low is invalidated if any subsequent low falls below its pivot price.
+// Also auto-expire after `length` bars (would have confirmed by then).
+// =========================================================================
+if array.size(tLines) > 0
+    i = array.size(tLines) - 1
+    while i >= 0
+        pBar   = array.get(tBars,   i)
+        pPrice = array.get(tPrices, i)
+        born   = array.get(tBorn,   i)
+        isH    = array.get(tIsHigh, i)
+        age    = n - born
+        invalid = false
+        // Price invalidation: subsequent bar broke the pivot
+        if isH and high > pPrice and n > pBar
+            invalid := true
+        if not isH and low < pPrice and n > pBar
+            invalid := true
+        // Age expiration: never promoted to confirmed within `length` bars
+        if age >= length
+            invalid := true
+        if invalid
+            removeTent(i)
+        i -= 1
+
+// Cap total tentatives (FIFO)
+while array.size(tLines) > maxTent
+    removeTent(0)
+
+// =========================================================================
+// CONFIRMED HIGHS
+// =========================================================================
+if isValid and phC != phC[1] and not na(phC)
+    if not na(prevPH) and not na(prevPHA) and not na(prevPHB)
+        cls   = classify(phAC, prevPHA, phBC, prevPHB)
+        gapOK = na(lastHsig) or (n - lastHsig) >= minGap
+        if gapOK and ((cls == 1 and showStrong) or (cls == 2 and showEqual))
+            drawHighC(prevPHbar, prevPH, n - length, phC, cls)
+            lastHsig := n
+            sigBearH_conf := true
+    prevPH    := phC
+    prevPHA   := phAC
+    prevPHB   := phBC
+    prevPHbar := n - length
+
+// =========================================================================
+// CONFIRMED LOWS
+// =========================================================================
+if isValid and plC != plC[1] and not na(plC)
+    if not na(prevPL) and not na(prevPLA) and not na(prevPLB)
+        cls   = classify(plAC, prevPLA, plBC, prevPLB)
+        gapOK = na(lastLsig) or (n - lastLsig) >= minGap
+        if gapOK and ((cls == 1 and showStrong) or (cls == 2 and showEqual))
+            drawLowC(prevPLbar, prevPL, n - length, plC, cls)
+            lastLsig := n
+            sigBullL_conf := true
+    prevPL    := plC
+    prevPLA   := plAC
+    prevPLB   := plBC
+    prevPLbar := n - length
+
+// =========================================================================
+// TENTATIVE HIGHS
+// =========================================================================
+if showEarly and isValid and phE != phE[1] and not na(phE)
+    if not na(prevPHe) and not na(prevPHAe) and not na(prevPHBe)
+        cls = classify(phAE, prevPHAe, phBE, prevPHBe)
+        if (cls == 1 and showStrong) or (cls == 2 and showEqual)
+            [ln, lb] = drawTent(prevPHbarE, prevPHe, n - earlyLen, phE, cls, true)
+            array.push(tLines,  ln)
+            array.push(tLabels, lb)
+            array.push(tBars,   n - earlyLen)
+            array.push(tPrices, phE)
+            array.push(tBorn,   n)
+            array.push(tIsHigh, true)
+    prevPHe    := phE
+    prevPHAe   := phAE
+    prevPHBe   := phBE
+    prevPHbarE := n - earlyLen
+
+// =========================================================================
+// TENTATIVE LOWS
+// =========================================================================
+if showEarly and isValid and plE != plE[1] and not na(plE)
+    if not na(prevPLe) and not na(prevPLAe) and not na(prevPLBe)
+        cls = classify(plAE, prevPLAe, plBE, prevPLBe)
+        if (cls == 1 and showStrong) or (cls == 2 and showEqual)
+            [ln, lb] = drawTent(prevPLbarE, prevPLe, n - earlyLen, plE, cls, false)
+            array.push(tLines,  ln)
+            array.push(tLabels, lb)
+            array.push(tBars,   n - earlyLen)
+            array.push(tPrices, plE)
+            array.push(tBorn,   n)
+            array.push(tIsHigh, false)
+    prevPLe    := plE
+    prevPLAe   := plAE
+    prevPLBe   := plBE
+    prevPLbarE := n - earlyLen
+
+// =========================================================================
+// ALERTS
+// =========================================================================
+alertcondition(sigBearH_conf, 'MMD Bearish (confirmed)', 'MMD bearish divergence confirmed at swing high')
+alertcondition(sigBullL_conf, 'MMD Bullish (confirmed)', 'MMD bullish divergence confirmed at swing low')

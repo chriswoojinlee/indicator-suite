@@ -376,10 +376,16 @@ var int lastEmittedLowT  = -1
 
 // ─────────────────────────────────────────────────────────────
 // CME GAP EMISSION (anchored to last in-session bar)
+//
+// As of May 28 2026, CME trades BTC 24/7 — no weekend close means
+// no gap. Gate emission on time < cutoff so no new gap levels are
+// created, while existing ones continue to draw, fill, and clean up.
 // ─────────────────────────────────────────────────────────────
 
+int cme24x7Start = timestamp("UTC", 2026, 5, 28, 0, 0)
+
 var int lastGapAnc = -1
-bool newGapEmit = showGap and isBTC and not na(h1GapAnc) and h1GapAnc != lastGapAnc
+bool newGapEmit = showGap and isBTC and not na(h1GapAnc) and h1GapAnc != lastGapAnc and time < cme24x7Start
 
 if newGapEmit
     lastGapAnc := h1GapAnc

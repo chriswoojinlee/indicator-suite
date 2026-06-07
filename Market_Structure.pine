@@ -1,0 +1,551 @@
+//@version=6
+indicator("Market Structure", shorttitle="Market Structure", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=200)
+
+// ─────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────
+
+enableTrendValidation = input.bool(true, "Enable Trend Validation", group="Trend Validation")
+showValidationLevels  = input.bool(true, "Show Validation Levels", group="Trend Validation")
+showValidationLabels  = input.bool(true, "Show Validation Labels", group="Trend Validation")
+showValidationTrigger = input.bool(true, "Show Validation Trigger Line", group="Trend Validation", tooltip="Dashed line at the validation target level. A close beyond this level validates the trend.")
+
+alertBullMSB         = input.bool(true, "Alert on Bullish MSB", group="Alerts")
+alertBearMSB         = input.bool(true, "Alert on Bearish MSB", group="Alerts")
+alertTrendValidated  = input.bool(true, "Alert on Trend Validation", group="Alerts")
+
+// ─────────────────────────────────────────────────────────────
+// COLORS
+// ─────────────────────────────────────────────────────────────
+
+color BULL_COLOR           = color.green
+color BEAR_COLOR           = color.red
+color BULL_LABEL_COLOR     = color.green
+color BEAR_LABEL_COLOR     = color.red
+color VALIDATED_BULL_COLOR = color.new(color.lime, 0)
+color VALIDATED_BEAR_COLOR = color.new(color.red, 0)
+
+// ─────────────────────────────────────────────────────────────
+// PIVOT DETECTION (3-candle fractal, tie-tolerant)
+// ─────────────────────────────────────────────────────────────
+
+bool _isPivotHigh = high[1] >= high[2] and high[1] >= high[0] and (high[1] > high[2] or high[1] > high[0])
+bool _isPivotLow  = low[1] <= low[2] and low[1] <= low[0] and (low[1] < low[2] or low[1] < low[0])
+
+float pivotHighVal = _isPivotHigh ? high[1] : na
+float pivotLowVal  = _isPivotLow  ? low[1]  : na
+
+var float lastPivotHigh    = na
+var int   lastPivotHighBar = na
+var float lastPivotLow     = na
+var int   lastPivotLowBar  = na
+
+pivotHighConfirmed = not na(pivotHighVal)
+pivotLowConfirmed  = not na(pivotLowVal)
+
+if pivotHighConfirmed
+    lastPivotHigh    := pivotHighVal
+    lastPivotHighBar := bar_index - 1
+
+if pivotLowConfirmed
+    lastPivotLow    := pivotLowVal
+    lastPivotLowBar := bar_index - 1
+
+// ─────────────────────────────────────────────────────────────
+// STRUCTURAL SWING POINT FILTERING (alternation + external)
+// ─────────────────────────────────────────────────────────────
+
+var int   lastAcceptedType = 0
+var float structHigh       = na
+var int   structHighBar    = na
+var float structLow        = na
+var int   structLowBar     = na
+
+structHighUpdated = false
+structLowUpdated  = false
+
+if pivotHighConfirmed
+    if lastAcceptedType != 1
+        structHigh        := lastPivotHigh
+        structHighBar     := lastPivotHighBar
+        lastAcceptedType  := 1
+        structHighUpdated := true
+    else if lastPivotHigh > structHigh
+        structHigh        := lastPivotHigh
+        structHighBar     := lastPivotHighBar
+        structHighUpdated := true
+
+if pivotLowConfirmed
+    if lastAcceptedType != -1
+        structLow         := lastPivotLow
+        structLowBar      := lastPivotLowBar
+        lastAcceptedType  := -1
+        structLowUpdated  := true
+    else if lastPivotLow < structLow
+        structLow         := lastPivotLow
+        structLowBar      := lastPivotLowBar
+        structLowUpdated  := true
+
+// ─────────────────────────────────────────────────────────────
+// NEIGHBOR-SNAPPED PIVOT VALUES
+//
+// On each raw fractal, scans a 5-bar window (fractal + 3 left
+// + 1 right) for the most extreme wick. Stored persistently.
+// ─────────────────────────────────────────────────────────────
+
+var float snappedHigh    = na
+var int   snappedHighBar = na
+var float snappedLow     = na
+var int   snappedLowBar  = na
+
+if pivotHighConfirmed
+    float bestH = high[1]
+    int   bestB = bar_index - 1
+    if high[0] > bestH
+        bestH := high[0]
+        bestB := bar_index
+    if high[2] > bestH
+        bestH := high[2]
+        bestB := bar_index - 2
+    if high[3] > bestH
+        bestH := high[3]
+        bestB := bar_index - 3
+    if high[4] > bestH
+        bestH := high[4]
+        bestB := bar_index - 4
+    snappedHigh    := bestH
+    snappedHighBar := bestB
+
+if pivotLowConfirmed
+    float bestL = low[1]
+    int   bestB = bar_index - 1
+    if low[0] < bestL
+        bestL := low[0]
+        bestB := bar_index
+    if low[2] < bestL
+        bestL := low[2]
+        bestB := bar_index - 2
+    if low[3] < bestL
+        bestL := low[3]
+        bestB := bar_index - 3
+    if low[4] < bestL
+        bestL := low[4]
+        bestB := bar_index - 4
+    snappedLow    := bestL
+    snappedLowBar := bestB
+
+// ─────────────────────────────────────────────────────────────
+// LEG TRACKING
+//
+// Replicates human pivot identification:
+// 1. A "leg" is the period between structural lows (downtrend)
+//    or structural highs (uptrend).
+// 2. The highest snapped pivot within each leg is the swing high.
+// 3. Resets when a new structural boundary forms or MSB fires.
+//
+// No hardcoded lookback — the leg boundary is structural.
+// ─────────────────────────────────────────────────────────────
+
+var float legHigh    = na
+var int   legHighBar = na
+var float legLow     = na
+var int   legLowBar  = na
+
+// Reset on structural boundary (new leg starts)
+if structLowUpdated
+    legHigh    := na
+    legHighBar := na
+
+if structHighUpdated
+    legLow    := na
+    legLowBar := na
+
+// Accumulate best snapped pivot within current leg
+if pivotHighConfirmed
+    if na(legHigh) or snappedHigh > legHigh
+        legHigh    := snappedHigh
+        legHighBar := snappedHighBar
+
+if pivotLowConfirmed
+    if na(legLow) or snappedLow < legLow
+        legLow    := snappedLow
+        legLowBar := snappedLowBar
+
+// ─────────────────────────────────────────────────────────────
+// TREND STATE
+// ─────────────────────────────────────────────────────────────
+
+var int trend = 0
+
+// ─────────────────────────────────────────────────────────────
+// COUNTER-TREND PIVOT TRACKING
+//
+// activePivotLevel = max(legHigh, structHigh) in downtrend
+//                  = min(legLow, structLow)   in uptrend
+//
+// structHigh provides the noise floor — the pivot can't drop
+// below the alternation-filtered level. legHigh provides upside
+// correction when a raw pivot exceeds the structural level.
+// ─────────────────────────────────────────────────────────────
+
+var float activePivotLevel    = na
+var int   activePivotBar      = na
+
+var line  activePivotLine     = na
+needsPivotRedraw = false
+
+if trend < 0 and (pivotHighConfirmed or structHighUpdated or structLowUpdated)
+    float bestH = structHigh
+    int   bestB = structHighBar
+    if not na(legHigh) and legHigh > bestH
+        bestH := legHigh
+        bestB := legHighBar
+    if not na(bestH) and (bestH != activePivotLevel or bestB != activePivotBar)
+        activePivotLevel := bestH
+        activePivotBar   := bestB
+        needsPivotRedraw := true
+
+if trend > 0 and (pivotLowConfirmed or structLowUpdated or structHighUpdated)
+    float bestL = structLow
+    int   bestB = structLowBar
+    if not na(legLow) and legLow < bestL
+        bestL := legLow
+        bestB := legLowBar
+    if not na(bestL) and (bestL != activePivotLevel or bestB != activePivotBar)
+        activePivotLevel := bestL
+        activePivotBar   := bestB
+        needsPivotRedraw := true
+
+if trend == 0 and (structHighUpdated or structLowUpdated)
+    needsPivotRedraw := true
+
+// ─────────────────────────────────────────────────────────────
+// MSB DETECTION
+// ─────────────────────────────────────────────────────────────
+
+bullMSB = false
+if trend <= 0
+    float levelToBreak = trend < 0 and not na(activePivotLevel) ? activePivotLevel : structHigh
+    if not na(levelToBreak)
+        if close > levelToBreak and close[1] <= levelToBreak
+            bullMSB := true
+
+bearMSB = false
+if trend >= 0
+    float levelToBreak = trend > 0 and not na(activePivotLevel) ? activePivotLevel : structLow
+    if not na(levelToBreak)
+        if close < levelToBreak and close[1] >= levelToBreak
+            bearMSB := true
+
+// ─────────────────────────────────────────────────────────────
+// DEDUPLICATION
+// ─────────────────────────────────────────────────────────────
+
+var float lastBullMSBLevel = na
+var float lastBearMSBLevel = na
+
+float bullBreakLevel = trend < 0 and not na(activePivotLevel) ? activePivotLevel : structHigh
+float bearBreakLevel = trend > 0 and not na(activePivotLevel) ? activePivotLevel : structLow
+
+bullMSBValid = bullMSB and (na(lastBullMSBLevel) or bullBreakLevel != lastBullMSBLevel or trend <= 0)
+bearMSBValid = bearMSB and (na(lastBearMSBLevel) or bearBreakLevel != lastBearMSBLevel or trend >= 0)
+
+var float msbBrokenLevel    = na
+var int   msbBrokenLevelBar = na
+
+if bullMSBValid
+    msbBrokenLevel    := bullBreakLevel
+    msbBrokenLevelBar := trend < 0 and not na(activePivotBar) ? activePivotBar : structHighBar
+
+if bearMSBValid
+    msbBrokenLevel    := bearBreakLevel
+    msbBrokenLevelBar := trend > 0 and not na(activePivotBar) ? activePivotBar : structLowBar
+
+// ─────────────────────────────────────────────────────────────
+// MANAGED VISUAL OBJECTS
+// ─────────────────────────────────────────────────────────────
+
+var label activeMSBLabel         = na
+var line  activeMSBLine          = na
+var label activeValidationLabel  = na
+var line  activeValidationLine   = na
+var line  validationTriggerLine  = na
+var label validationTriggerLabel = na
+
+// ─────────────────────────────────────────────────────────────
+// VALIDATION LEVEL TRACKING
+// ─────────────────────────────────────────────────────────────
+
+var float bearValidationLevel = na
+var int   bearValidationBar   = na
+var float bullValidationLevel = na
+var int   bullValidationBar   = na
+
+// ─────────────────────────────────────────────────────────────
+// TREND FLIP + STATE UPDATE + VALIDATION RESET
+// ─────────────────────────────────────────────────────────────
+
+var int bearBreakCount         = 0
+var int bullBreakCount         = 0
+var int validatedTrend         = 0
+var int lastBrokenSwingHighBar = na
+var int lastBrokenSwingLowBar  = na
+
+if bullMSBValid
+    trend                  := 1
+    lastBullMSBLevel       := bullBreakLevel
+    activePivotLevel       := structLow
+    activePivotBar         := structLowBar
+    needsPivotRedraw       := true
+    bearBreakCount         := 0
+    bullBreakCount         := 0
+    lastBrokenSwingLowBar  := na
+    lastBrokenSwingHighBar := na
+    validatedTrend         := 0
+    bullValidationLevel    := structHigh
+    bullValidationBar      := structHighBar
+    bearValidationLevel    := na
+    bearValidationBar      := na
+    // Reset leg tracking for new trend
+    legHigh    := na
+    legHighBar := na
+    legLow     := na
+    legLowBar  := na
+    // Wipe visuals
+    if not na(activeValidationLabel)
+        label.delete(activeValidationLabel)
+    if not na(activeValidationLine)
+        line.delete(activeValidationLine)
+    if not na(validationTriggerLine)
+        line.delete(validationTriggerLine)
+    if not na(validationTriggerLabel)
+        label.delete(validationTriggerLabel)
+    activeValidationLabel  := na
+    activeValidationLine   := na
+    validationTriggerLine  := na
+    validationTriggerLabel := na
+
+if bearMSBValid
+    trend                  := -1
+    lastBearMSBLevel       := bearBreakLevel
+    activePivotLevel       := structHigh
+    activePivotBar         := structHighBar
+    needsPivotRedraw       := true
+    bearBreakCount         := 0
+    bullBreakCount         := 0
+    lastBrokenSwingLowBar  := na
+    lastBrokenSwingHighBar := na
+    validatedTrend         := 0
+    bearValidationLevel    := structLow
+    bearValidationBar      := structLowBar
+    bullValidationLevel    := na
+    bullValidationBar      := na
+    legHigh    := na
+    legHighBar := na
+    legLow     := na
+    legLowBar  := na
+    if not na(activeValidationLabel)
+        label.delete(activeValidationLabel)
+    if not na(activeValidationLine)
+        line.delete(activeValidationLine)
+    if not na(validationTriggerLine)
+        line.delete(validationTriggerLine)
+    if not na(validationTriggerLabel)
+        label.delete(validationTriggerLabel)
+    activeValidationLabel  := na
+    activeValidationLine   := na
+    validationTriggerLine  := na
+    validationTriggerLabel := na
+
+// ─────────────────────────────────────────────────────────────
+// UPDATE VALIDATION LEVEL (most-extreme post-MSB structural point)
+// ─────────────────────────────────────────────────────────────
+
+if trend == -1 and structLowUpdated and not na(bearValidationLevel)
+    if structLow < bearValidationLevel
+        bearValidationLevel := structLow
+        bearValidationBar   := structLowBar
+
+if trend == 1 and structHighUpdated and not na(bullValidationLevel)
+    if structHigh > bullValidationLevel
+        bullValidationLevel := structHigh
+        bullValidationBar   := structHighBar
+
+// ─────────────────────────────────────────────────────────────
+// REDRAW ACTIVE PIVOT LINE
+// ─────────────────────────────────────────────────────────────
+
+if needsPivotRedraw
+    if not na(activePivotLine)
+        line.delete(activePivotLine)
+
+    if trend > 0 and not na(activePivotLevel)
+        activePivotLine := line.new(
+             x1=activePivotBar, y1=activePivotLevel,
+             x2=bar_index, y2=activePivotLevel,
+             color=BEAR_COLOR, style=line.style_dashed, width=1)
+    else if trend < 0 and not na(activePivotLevel)
+        activePivotLine := line.new(
+             x1=activePivotBar, y1=activePivotLevel,
+             x2=bar_index, y2=activePivotLevel,
+             color=BULL_COLOR, style=line.style_dashed, width=1)
+    else if trend == 0 and not na(structLow)
+        activePivotLine := line.new(
+             x1=structLowBar, y1=structLow,
+             x2=bar_index, y2=structLow,
+             color=BEAR_COLOR, style=line.style_dashed, width=1)
+
+if not na(activePivotLine)
+    line.set_x2(activePivotLine, bar_index)
+
+// ─────────────────────────────────────────────────────────────
+// MSB VISUAL
+// ─────────────────────────────────────────────────────────────
+
+if bullMSBValid
+    if not na(activeMSBLabel)
+        label.delete(activeMSBLabel)
+    if not na(activeMSBLine)
+        line.delete(activeMSBLine)
+    activeMSBLabel := label.new(
+         x=bar_index, y=low,
+         text="MSB", style=label.style_label_up,
+         color=BULL_LABEL_COLOR, textcolor=color.white, size=size.small)
+    activeMSBLine := line.new(
+         x1=msbBrokenLevelBar, y1=msbBrokenLevel,
+         x2=bar_index, y2=msbBrokenLevel,
+         color=BULL_COLOR, style=line.style_solid, width=1)
+
+if bearMSBValid
+    if not na(activeMSBLabel)
+        label.delete(activeMSBLabel)
+    if not na(activeMSBLine)
+        line.delete(activeMSBLine)
+    activeMSBLabel := label.new(
+         x=bar_index, y=high,
+         text="MSB", style=label.style_label_down,
+         color=BEAR_LABEL_COLOR, textcolor=color.white, size=size.small)
+    activeMSBLine := line.new(
+         x1=msbBrokenLevelBar, y1=msbBrokenLevel,
+         x2=bar_index, y2=msbBrokenLevel,
+         color=BEAR_COLOR, style=line.style_solid, width=1)
+
+// ─────────────────────────────────────────────────────────────
+// TREND VALIDATION TRIGGER LINE (runs BEFORE validation)
+// ─────────────────────────────────────────────────────────────
+
+bool bearTriggerArmed = enableTrendValidation and showValidationTrigger and bearBreakCount == 1 and validatedTrend != -1 and not na(bearValidationLevel) and not na(structLowBar) and (na(lastBrokenSwingLowBar) or structLowBar != lastBrokenSwingLowBar)
+bool bullTriggerArmed = enableTrendValidation and showValidationTrigger and bullBreakCount == 1 and validatedTrend != 1 and not na(bullValidationLevel) and not na(structHighBar) and (na(lastBrokenSwingHighBar) or structHighBar != lastBrokenSwingHighBar)
+bool anyTriggerArmed  = bearTriggerArmed or bullTriggerArmed
+
+float newTriggerLevel = bearTriggerArmed ? bearValidationLevel : bullTriggerArmed ? bullValidationLevel : na
+int   newTriggerBar   = bearTriggerArmed ? bearValidationBar : bullTriggerArmed ? bullValidationBar : na
+
+var float validationTriggerLevel = na
+var int   validationTriggerBar   = na
+
+if not anyTriggerArmed
+    if not na(validationTriggerLine)
+        line.delete(validationTriggerLine)
+        validationTriggerLine := na
+    if not na(validationTriggerLabel)
+        label.delete(validationTriggerLabel)
+        validationTriggerLabel := na
+    validationTriggerLevel := na
+    validationTriggerBar   := na
+else if newTriggerLevel != validationTriggerLevel or newTriggerBar != validationTriggerBar
+    if not na(validationTriggerLine)
+        line.delete(validationTriggerLine)
+    if not na(validationTriggerLabel)
+        label.delete(validationTriggerLabel)
+
+    validationTriggerLevel := newTriggerLevel
+    validationTriggerBar   := newTriggerBar
+
+    if bearTriggerArmed
+        validationTriggerLine  := line.new(x1=newTriggerBar, y1=newTriggerLevel, x2=bar_index, y2=newTriggerLevel,
+             color=VALIDATED_BEAR_COLOR, style=line.style_dashed, width=1)
+        validationTriggerLabel := label.new(x=bar_index, y=newTriggerLevel,
+             text="Trigger — close below validates downtrend",
+             style=label.style_label_left, color=VALIDATED_BEAR_COLOR, textcolor=color.white, size=size.small)
+    if bullTriggerArmed
+        validationTriggerLine  := line.new(x1=newTriggerBar, y1=newTriggerLevel, x2=bar_index, y2=newTriggerLevel,
+             color=VALIDATED_BULL_COLOR, style=line.style_dashed, width=1)
+        validationTriggerLabel := label.new(x=bar_index, y=newTriggerLevel,
+             text="Trigger — close above validates uptrend",
+             style=label.style_label_left, color=VALIDATED_BULL_COLOR, textcolor=color.white, size=size.small)
+
+if not na(validationTriggerLine)
+    line.set_x2(validationTriggerLine, bar_index)
+if not na(validationTriggerLabel)
+    label.set_x(validationTriggerLabel, bar_index)
+
+// ─────────────────────────────────────────────────────────────
+// TREND VALIDATION (runs AFTER trigger)
+// ─────────────────────────────────────────────────────────────
+
+freshBearBreak = enableTrendValidation and not na(bearValidationLevel) and close < bearValidationLevel and not na(structLowBar) and (na(lastBrokenSwingLowBar) or structLowBar != lastBrokenSwingLowBar)
+freshBullBreak = enableTrendValidation and not na(bullValidationLevel) and close > bullValidationLevel and not na(structHighBar) and (na(lastBrokenSwingHighBar) or structHighBar != lastBrokenSwingHighBar)
+
+if freshBearBreak
+    bearBreakCount        := bearBreakCount + 1
+    lastBrokenSwingLowBar := structLowBar
+
+    if bearBreakCount >= 2 and validatedTrend != -1
+        if not na(activeValidationLabel)
+            label.delete(activeValidationLabel)
+        if not na(activeValidationLine)
+            line.delete(activeValidationLine)
+
+        if showValidationLevels
+            activeValidationLine := line.new(x1=bearValidationBar, y1=bearValidationLevel, x2=bar_index, y2=bearValidationLevel,
+                 color=VALIDATED_BEAR_COLOR, style=line.style_solid, width=2)
+        if showValidationLabels
+            activeValidationLabel := label.new(x=bar_index, y=bearValidationLevel, text="▼",
+                 style=label.style_label_up, color=VALIDATED_BEAR_COLOR, textcolor=color.white, size=size.small)
+        validatedTrend := -1
+
+if freshBullBreak
+    bullBreakCount         := bullBreakCount + 1
+    lastBrokenSwingHighBar := structHighBar
+
+    if bullBreakCount >= 2 and validatedTrend != 1
+        if not na(activeValidationLabel)
+            label.delete(activeValidationLabel)
+        if not na(activeValidationLine)
+            line.delete(activeValidationLine)
+
+        if showValidationLevels
+            activeValidationLine := line.new(x1=bullValidationBar, y1=bullValidationLevel, x2=bar_index, y2=bullValidationLevel,
+                 color=VALIDATED_BULL_COLOR, style=line.style_solid, width=2)
+        if showValidationLabels
+            activeValidationLabel := label.new(x=bar_index, y=bullValidationLevel, text="▲",
+                 style=label.style_label_down, color=VALIDATED_BULL_COLOR, textcolor=color.white, size=size.small)
+        validatedTrend := 1
+
+// ─────────────────────────────────────────────────────────────
+// PLOTS (data window only)
+// ─────────────────────────────────────────────────────────────
+
+plot(structHigh, "Structural High", color=color.new(color.white, 100), display=display.data_window)
+plot(structLow, "Structural Low", color=color.new(color.white, 100), display=display.data_window)
+plot(activePivotLevel, "Active Pivot Level", color=color.new(color.white, 100), display=display.data_window)
+plot(legHigh, "Leg High", color=color.new(color.white, 100), display=display.data_window)
+plot(legLow, "Leg Low", color=color.new(color.white, 100), display=display.data_window)
+plot(trend, "Trend State", color=color.new(color.white, 100), display=display.data_window)
+plot(bearBreakCount, "Bear Break Count", color=color.new(color.white, 100), display=display.data_window)
+plot(bullBreakCount, "Bull Break Count", color=color.new(color.white, 100), display=display.data_window)
+plot(validatedTrend, "Validated Trend", color=color.new(color.white, 100), display=display.data_window)
+plot(bearValidationLevel, "Bear Validation Level", color=color.new(color.white, 100), display=display.data_window)
+plot(bullValidationLevel, "Bull Validation Level", color=color.new(color.white, 100), display=display.data_window)
+
+// ─────────────────────────────────────────────────────────────
+// ALERTS
+// ─────────────────────────────────────────────────────────────
+
+alertcondition(bullMSBValid and alertBullMSB and barstate.isconfirmed, title="Bullish MSB", message="Bullish MSB on {{ticker}} {{interval}}")
+alertcondition(bearMSBValid and alertBearMSB and barstate.isconfirmed, title="Bearish MSB", message="Bearish MSB on {{ticker}} {{interval}}")
+alertcondition((bullMSBValid and alertBullMSB or bearMSBValid and alertBearMSB) and barstate.isconfirmed, title="Any MSB", message="MSB on {{ticker}} {{interval}}")
+
+alertcondition(validatedTrend == 1 and validatedTrend[1] != 1 and alertTrendValidated and barstate.isconfirmed, title="Uptrend Validated", message="Uptrend validated on {{ticker}} {{interval}}")
+alertcondition(validatedTrend == -1 and validatedTrend[1] != -1 and alertTrendValidated and barstate.isconfirmed, title="Downtrend Validated", message="Downtrend validated on {{ticker}} {{interval}}")
