@@ -85,7 +85,7 @@ getLevelDescription(int idx, int total, float price, float currentClose) =>
     string side = price > currentClose ? "R" : "S"
 
     if idx == 0
-        desc := side + " — Mid"
+        desc := side + " — Range Mid"
     else
         float ratio = total > 0 ? math.abs(idx) / total : 0.0
         bool isPositive = idx > 0
@@ -95,13 +95,13 @@ getLevelDescription(int idx, int total, float price, float currentClose) =>
             desc := side + " — Extreme"
         else if math.abs(ratio - 0.5) < 0.01
             // Range boundary: ≈ anchored high or low
-            desc := side + (isPositive ? " — High" : " — Low")
+            desc := side + (isPositive ? " — Range High" : " — Range Low")
         else if ratio > 0.5
             // Beyond range boundary
             desc := side + " — Extension"
         else
             // Between midpoint and boundary
-            desc := side + " — Quarter"
+            desc := side + " — Range Quarter"
     desc
 
 // ─────────────────────────────────────────────────────────────
