@@ -1,14 +1,15 @@
 // ═══════════════════════════════════════════════════════════════
-// CAPITULATION RETEST — 12H
+// CAPITULATION RETEST — 12H (FINAL v4)
 // ═══════════════════════════════════════════════════════════════
-// All parameters hardcoded to validated 12H configuration.
-// PF 14.1 | 7.78% max DD | 81%+ WR
+// MM-style passive accumulation. Proactive compound limits.
+// One order per 12H candle. No range stop. Hard inval only.
+// Closest possible adaptation of mentor's 2D mechanics.
 //@version=6
-strategy("Capitulation Retest",
+strategy("Capitulation Retest 12H",
      overlay            = true,
-     pyramiding         = 4,
+     pyramiding         = 3,
      default_qty_type   = strategy.percent_of_equity,
-     default_qty_value  = 5,
+     default_qty_value  = 75,
      commission_type    = strategy.commission.percent,
      commission_value   = 0,
      slippage           = 0,
@@ -17,27 +18,22 @@ strategy("Capitulation Retest",
      calc_on_every_tick = true,
      process_orders_on_close = true)
 
-// ── HARDCODED 12H PARAMETERS ─────────────────────────────────
+// ── PARAMETERS ───────────────────────────────────────────────
 
-WICK_THR    = 2.4       // 4.8 * sqrt(12/48)
+WICK_THR    = 2.725
 TP_FIB      = 0.57
-IMPULSE     = 3
-STOP_MULT   = 0.55
-HARD_PCT    = 12.247    // 5 * sqrt(12/2)
+IMPULSE     = 2
+HARD_PCT    = 12.247
 VALID_TF    = timeframe.in_seconds() / 3600.0 == 12
 
-// Pyramid multipliers (hardcoded, not exposed as inputs).
-// Base size controlled via Properties → Order Size.
-// default_qty_value = 25 (% of equity). Multipliers scale from that.
-QTY_1       = 25.0          // 1.0×
-QTY_2       = 18.75         // 0.75×
-QTY_3       = 37.5          // 1.5×
-QTY_4       = 25.0          // 1.0×
+QTY_1       = 2
+QTY_2       = 3
+QTY_3       = 5
 
-// ── VISUALS INPUT ────────────────────────────────────────────
+// ── VISUALS ──────────────────────────────────────────────────
 
 colLong  = input.color(color.green, "Long Color",  group="Visuals")
-colShort = input.color(color.red, "Short Color", group="Visuals")
+colShort = input.color(color.red,   "Short Color", group="Visuals")
 
 // ── CALCULATIONS ─────────────────────────────────────────────
 
@@ -81,22 +77,23 @@ else if upperQ
 
 // ── STATE ────────────────────────────────────────────────────
 
-var int   dir           = 0
-var float rangeHigh     = na
-var float rangeLow      = na
-var float tp            = na
-var float sl            = na
-var float initialEntry  = na
-var int   entryCount    = 0
-var int   setupBarIdx   = 0
-var bool  initialPlaced = false
+var int   dir            = 0
+var float rangeHigh      = na
+var float rangeLow       = na
+var float tp             = na
+var float hardLvl        = na
+var float initialEntry   = na
+var int   entryCount     = 0
+var int   setupBarIdx    = 0
+var bool  initialPlaced  = false
+var int   prevOpenTrades = 0
+var int   lastFillBar    = -1
 
 calcTP(float rH, float rL, int d) =>
     d == -1 ? rH - TP_FIB * (rH - rL) : rL + TP_FIB * (rH - rL)
 
-calcSL(float rH, float rL, int d) =>
-    float rng = rH - rL
-    d == -1 ? rH + STOP_MULT * rng : rL - STOP_MULT * rng
+calcHard(float rH, float rL, int d) =>
+    d == -1 ? rH * (1 + HARD_PCT / 100) : rL * (1 - HARD_PCT / 100)
 
 // ── NEW SETUP ────────────────────────────────────────────────
 
@@ -105,90 +102,92 @@ bool justFormed = false
 if dir == 0
     if isLowerCap
         dir := -1, rangeHigh := high, rangeLow := low
-        initialEntry := close, tp := calcTP(high, low, -1), sl := calcSL(high, low, -1)
+        initialEntry := close
+        tp := calcTP(high, low, -1), hardLvl := calcHard(high, low, -1)
         entryCount := 0, setupBarIdx := bar_index, initialPlaced := false
+        prevOpenTrades := 0, lastFillBar := -1
         justFormed := true
     else if isUpperCap
         dir := 1, rangeHigh := high, rangeLow := low
-        initialEntry := close, tp := calcTP(high, low, 1), sl := calcSL(high, low, 1)
+        initialEntry := close
+        tp := calcTP(high, low, 1), hardLvl := calcHard(high, low, 1)
         entryCount := 0, setupBarIdx := bar_index, initialPlaced := false
+        prevOpenTrades := 0, lastFillBar := -1
         justFormed := true
 
-// ── INITIAL ENTRY ────────────────────────────────────────────
+// ── ENTRIES (one per candle) ─────────────────────────────────
+// Initial: limit at cap candle close.
+// Compounds: standing limit at range extreme.
+// Time gate: no new entry on the same bar as a previous fill.
 
-if dir != 0 and not initialPlaced and bar_index > setupBarIdx
-    if dir == -1
-        strategy.entry("S1", strategy.short, qty=QTY_1, limit=initialEntry)
-    else
-        strategy.entry("L1", strategy.long, qty=QTY_1, limit=initialEntry)
-    initialPlaced := true
-    entryCount := 1
+if dir != 0 and bar_index > setupBarIdx
+    bool canPlace = bar_index > lastFillBar
 
-// ── COMPOUNDS ────────────────────────────────────────────────
+    if not initialPlaced and canPlace
+        if dir == -1
+            strategy.entry("S1", strategy.short, qty=QTY_1, limit=initialEntry)
+        else
+            strategy.entry("L1", strategy.long, qty=QTY_1, limit=initialEntry)
+        initialPlaced := true
+        entryCount := 1
 
-bool compoundTriggered = false
+    if initialPlaced and entryCount < 3 and canPlace
+        float cq = entryCount == 1 ? QTY_2 : QTY_3
+        string eid = (dir == -1 ? "S" : "L") + str.tostring(entryCount + 1)
+        if dir == -1
+            strategy.entry(eid, strategy.short, qty=cq, limit=rangeHigh)
+        else
+            strategy.entry(eid, strategy.long, qty=cq, limit=rangeLow)
 
-if dir != 0 and initialPlaced and entryCount < 4
-    if dir == -1
-        bool swept = high > rangeHigh
-        bool bias  = close < open
-        if swept
+// ── DETECT FILLS → UPDATE RANGE ──────────────────────────────
+// Range only expands when a compound fills.
+// One-candle gate: lastFillBar prevents stacking.
+
+int openNow = strategy.opentrades
+if dir != 0 and openNow > prevOpenTrades
+    lastFillBar := bar_index
+    if openNow > 1
+        // Compound filled — expand range to where it filled
+        if dir == -1 and high > rangeHigh
             rangeHigh := high
-        if swept and bias
-            tp := calcTP(rangeHigh, rangeLow, -1)
-            sl := calcSL(rangeHigh, rangeLow, -1)
-            entryCount += 1
-            compoundTriggered := true
-            float cq = entryCount == 2 ? QTY_2 : entryCount == 3 ? QTY_3 : QTY_4
-            strategy.entry("S" + str.tostring(entryCount), strategy.short, qty=cq, limit=close)
-    else
-        bool swept = low < rangeLow
-        bool bias  = close > open
-        if swept
+        if dir == 1 and low < rangeLow
             rangeLow := low
-        if swept and bias
-            tp := calcTP(rangeHigh, rangeLow, 1)
-            sl := calcSL(rangeHigh, rangeLow, 1)
-            entryCount += 1
-            compoundTriggered := true
-            float cq = entryCount == 2 ? QTY_2 : entryCount == 3 ? QTY_3 : QTY_4
-            strategy.entry("L" + str.tostring(entryCount), strategy.long, qty=cq, limit=close)
+        tp := calcTP(rangeHigh, rangeLow, dir)
+        hardLvl := calcHard(rangeHigh, rangeLow, dir)
+    entryCount := openNow
 
-    if dir == -1 and low < rangeLow
-        rangeLow := low
-        tp := calcTP(rangeHigh, rangeLow, -1)
-        sl := calcSL(rangeHigh, rangeLow, -1)
-    if dir == 1 and high > rangeHigh
-        rangeHigh := high
-        tp := calcTP(rangeHigh, rangeLow, 1)
-        sl := calcSL(rangeHigh, rangeLow, 1)
+prevOpenTrades := openNow
 
-// ── EXITS ────────────────────────────────────────────────────
+// Wick-side expansion (improves TP only)
+if dir == -1 and low < rangeLow
+    rangeLow := low
+    tp := calcTP(rangeHigh, rangeLow, -1)
+if dir == 1 and high > rangeHigh
+    rangeHigh := high
+    tp := calcTP(rangeHigh, rangeLow, 1)
+
+// ── EXITS (TP only — no range stop) ─────────────────────────
 
 if dir == -1 and entryCount >= 1
-    strategy.exit("X1", from_entry="S1", limit=tp, stop=sl)
+    strategy.exit("X1", from_entry="S1", limit=tp)
 if dir == -1 and entryCount >= 2
-    strategy.exit("X2", from_entry="S2", limit=tp, stop=sl)
+    strategy.exit("X2", from_entry="S2", limit=tp)
 if dir == -1 and entryCount >= 3
-    strategy.exit("X3", from_entry="S3", limit=tp, stop=sl)
-if dir == -1 and entryCount >= 4
-    strategy.exit("X4", from_entry="S4", limit=tp, stop=sl)
+    strategy.exit("X3", from_entry="S3", limit=tp)
 
 if dir == 1 and entryCount >= 1
-    strategy.exit("X1", from_entry="L1", limit=tp, stop=sl)
+    strategy.exit("X1", from_entry="L1", limit=tp)
 if dir == 1 and entryCount >= 2
-    strategy.exit("X2", from_entry="L2", limit=tp, stop=sl)
+    strategy.exit("X2", from_entry="L2", limit=tp)
 if dir == 1 and entryCount >= 3
-    strategy.exit("X3", from_entry="L3", limit=tp, stop=sl)
-if dir == 1 and entryCount >= 4
-    strategy.exit("X4", from_entry="L4", limit=tp, stop=sl)
+    strategy.exit("X3", from_entry="L3", limit=tp)
 
-// ── HARD INVALIDATION ────────────────────────────────────────
+// ── HARD INVALIDATION (bar-close only) ───────────────────────
 
 bool hardInval = false
-if dir == -1 and entryCount > 0 and close > rangeHigh * (1 + HARD_PCT / 100)
+if dir == -1 and entryCount > 0 and close > hardLvl
     hardInval := true
-if dir == 1 and entryCount > 0 and close < rangeLow * (1 - HARD_PCT / 100)
+if dir == 1 and entryCount > 0 and close < hardLvl
     hardInval := true
 
 if hardInval and dir != 0
@@ -197,24 +196,21 @@ if hardInval and dir != 0
 
 // ── RESET ON FLAT ────────────────────────────────────────────
 
-if dir != 0 and strategy.position_size == 0 and entryCount > 0 and bar_index > setupBarIdx + 1
+if dir != 0 and strategy.position_size == 0 and strategy.opentrades == 0 and entryCount >= 3 and bar_index > setupBarIdx + 1
+    dir := 0, entryCount := 0, initialPlaced := false
+
+if dir != 0 and strategy.position_size == 0 and strategy.opentrades == 0 and bar_index > setupBarIdx + 120
     dir := 0, entryCount := 0, initialPlaced := false
 
 // ── ALERTS ───────────────────────────────────────────────────
 
 if justFormed
     string dirStr = dir == -1 ? "SHORT" : "LONG"
-    alert(syminfo.ticker + " 12H — " + dirStr + " Capitulation Setup forming. Limit entry at " + str.tostring(initialEntry, format.mintick) + ". TP: " + str.tostring(tp, format.mintick), alert.freq_once_per_bar)
-
-if compoundTriggered
-    string dirStr = dir == -1 ? "SHORT" : "LONG"
-    alert(syminfo.ticker + " 12H — " + dirStr + " compound #" + str.tostring(entryCount) + ". New limit at " + str.tostring(close, format.mintick) + ". TP: " + str.tostring(tp, format.mintick), alert.freq_once_per_bar)
+    alert(syminfo.ticker + " 12H — " + dirStr + " Capitulation Setup. Entry at " + str.tostring(initialEntry, format.mintick) + ". TP: " + str.tostring(tp, format.mintick), alert.freq_once_per_bar)
 
 alertcondition(isLowerCap or isUpperCap, "Setup Forming", "Capitulation retest setup detected.")
-alertcondition(compoundTriggered, "Compound Triggered", "Compound entry triggered.")
 
 // ── STATUS LABEL ─────────────────────────────────────────────
-// Single label with \n — lines never diverge.
 
 var label statusLbl = na
 if not na(statusLbl)
@@ -222,12 +218,11 @@ if not na(statusLbl)
 
 if VALID_TF
     int lblX = bar_index + 12
-
     if dir == 0
         statusLbl := label.new(lblX, close, "The Strategy is in Idle Mode, patience requested.\n\nAnd simply wait for a setup to form.", color=color.new(color.gray, 90), textcolor=color.gray, style=label.style_label_left, size=size.large, textalign=text.align_left)
     else
         string candleType = dir == -1 ? "Bearish" : "Bullish"
         string dirWord    = dir == -1 ? "Short" : "Long"
         color  dirCol     = dir == -1 ? colShort : colLong
-        string txt = "A " + candleType + " Candle Printed. Enter a Capitulation Setup " + dirWord + " on this candle close!\n\nAnd Full TP will be at " + str.tostring(tp, format.mintick) + "."
+        string txt = "A " + candleType + " Candle Printed. Enter a Capitulation Setup " + dirWord + " on this candle close!\n\nTP: " + str.tostring(tp, format.mintick) + "\nHard: " + str.tostring(hardLvl, format.mintick)
         statusLbl := label.new(lblX, close, txt, color=color.new(dirCol, 90), textcolor=dirCol, style=label.style_label_left, size=size.large, textalign=text.align_left)
