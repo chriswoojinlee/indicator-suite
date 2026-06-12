@@ -4,52 +4,32 @@
 indicator("Multi-Asset MMD", "MMD", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
 // =========================================================================
+// HARDCODED BEHAVIOR PARAMETERS (edit here if needed)
+// =========================================================================
+int EXTERNAL_PIVOT_DEPTH = 5    // 0 = disable external filter
+int MAX_SIGNALS_SHOWN    = 5
+int SYNC_WINDOW          = 10   // both assets must alternate within this many bars for a valid comparison
+
+// =========================================================================
 // INPUTS
 // =========================================================================
-length     = input.int(3,     'Confirmed pivot lookback',          minval = 2, group = 'Pivot Settings')
-showEarly  = input.bool(false,'Plot tentative (early) signals',    group = 'Pivot Settings', tooltip = 'Off by default. Tentatives auto-purge when invalidated by subsequent price action or after `Confirmed lookback` bars.')
-earlyLen   = input.int(1,     'Tentative pivot lookback',          minval = 1, group = 'Pivot Settings')
-maxTent    = input.int(30,    'Max tentative drawings retained',   minval = 5, maxval = 100, group = 'Pivot Settings')
-
-showStrong = input.bool(true,  'Strong (opposite directions: HH/LH or HL/LL split)', group = 'Divergence Types')
-showEqual  = input.bool(false, 'Equal-level (one breaks prior pivot, other prints equal)', group = 'Divergence Types')
-
-minGap     = input.int(3, 'Min bars between confirmed signals (same side)', minval = 0, group = 'Filters')
-
 g1A = input.symbol('BINANCE:BTCUSDT.P', 'Asset A', group = 'Symbols - Crypto (BTC vs ETH)')
 g1B = input.symbol('BINANCE:ETHUSDT.P', 'Asset B', group = 'Symbols - Crypto (BTC vs ETH)')
-
 g2A = input.symbol('COMEX:GC1!',        'Asset A', group = 'Symbols - Metals (Gold vs Silver)')
 g2B = input.symbol('COMEX:SI1!',        'Asset B', group = 'Symbols - Metals (Gold vs Silver)')
-
 g3A = input.symbol('CME_MINI:ES1!',     'Asset A', group = 'Symbols - Indices (S&P vs Nasdaq)')
 g3B = input.symbol('CME_MINI:NQ1!',     'Asset B', group = 'Symbols - Indices (S&P vs Nasdaq)')
 
-cStrBear = input.color(color.red,    'Strong Bear (swing high)', group = 'Style')
-cStrBull = input.color(color.green,  'Strong Bull (swing low)',  group = 'Style')
-cEqBear  = input.color(color.orange, 'Equal Bear',               group = 'Style')
-cEqBull  = input.color(color.lime,   'Equal Bull',               group = 'Style')
-earlyT   = input.int(70, 'Tentative line transparency', minval = 0, maxval = 90, group = 'Style')
+cBear = input.color(color.red,   'Bear (swing high)', group = 'Style')
+cBull = input.color(color.green, 'Bull (swing low)',  group = 'Style')
 
 // =========================================================================
-// ASSET-GROUP DETECTION
+// TIGHT ASSET DETECTION
 // =========================================================================
-hit3(needle) =>
-    T = str.upper(syminfo.ticker)
-    B = str.upper(syminfo.basecurrency)
-    F = str.upper(syminfo.tickerid)
-    str.contains(T, needle) or str.contains(B, needle) or str.contains(F, needle)
-
-isBTC    = hit3('BTC')    or hit3('XBT')    or hit3('BITCOIN')
-isETH    = hit3('ETH')    or hit3('ETHEREUM')
-isGold   = hit3('GOLD')   or hit3('XAU')    or hit3('GC1!') or hit3('GC2!') or hit3('GLD')   or hit3('XAUT')   or hit3('PAXG') or hit3('IAU')
-isSilver = hit3('SILVER') or hit3('XAG')    or hit3('SI1!') or hit3('SI2!') or hit3('SLV')   or hit3('PSLV')
-isSPX    = hit3('SPX')    or hit3('SPY')    or hit3('ES1!') or hit3('ES2!') or hit3('US500') or hit3('SP500')  or hit3('VOO')  or hit3('IVV')
-isNDX    = hit3('NDX')    or hit3('NQ1!')   or hit3('NQ2!') or hit3('QQQ')  or hit3('US100') or hit3('NAS100') or hit3('NDQ')
-
-isCrypto  = isBTC  or isETH
-isMetals  = isGold or isSilver
-isIndices = isSPX  or isNDX
+chartId   = syminfo.tickerid
+isCrypto  = chartId == g1A or chartId == g1B
+isMetals  = chartId == g2A or chartId == g2B
+isIndices = chartId == g3A or chartId == g3B
 isValid   = isCrypto or isMetals or isIndices
 
 // =========================================================================
@@ -68,218 +48,245 @@ hB = isCrypto ? hB1 : isMetals ? hB2 : isIndices ? hB3 : float(na)
 lB = isCrypto ? lB1 : isMetals ? lB2 : isIndices ? lB3 : float(na)
 
 // =========================================================================
-// PIVOTS
+// STRUCTURAL PIVOT DETECTION
+// 3-candle fractal + alternation filter, mirroring the MSI indicator.
+// Same-type pivots within a segment are absorbed via extension (overwrite
+// if more extreme); opposite-type pivots trigger alternation and save the
+// just-ended segment's extreme as the previous structural pivot.
 // =========================================================================
-phC  = fixnan(ta.pivothigh(length, length))
-plC  = fixnan(ta.pivotlow(length, length))
-phAC = fixnan(ta.pivothigh(hA, length, length))
-plAC = fixnan(ta.pivotlow(lA, length, length))
-phBC = fixnan(ta.pivothigh(hB, length, length))
-plBC = fixnan(ta.pivotlow(lB, length, length))
+detectStructPivot(srcH, srcL) =>
+    isPivotHigh = srcH[1] >= srcH[2] and srcH[1] >= srcH[0] and (srcH[1] > srcH[2] or srcH[1] > srcH[0])
+    isPivotLow  = srcL[1] <= srcL[2] and srcL[1] <= srcL[0] and (srcL[1] < srcL[2] or srcL[1] < srcL[0])
 
-phE  = fixnan(ta.pivothigh(earlyLen, earlyLen))
-plE  = fixnan(ta.pivotlow(earlyLen, earlyLen))
-phAE = fixnan(ta.pivothigh(hA, earlyLen, earlyLen))
-plAE = fixnan(ta.pivotlow(lA, earlyLen, earlyLen))
-phBE = fixnan(ta.pivothigh(hB, earlyLen, earlyLen))
-plBE = fixnan(ta.pivotlow(lB, earlyLen, earlyLen))
+    var float structHigh        = na
+    var int   structHighBar     = na
+    var float prevStructHigh    = na
+    var int   prevStructHighBar = na
+    var float structLow         = na
+    var int   structLowBar      = na
+    var float prevStructLow     = na
+    var int   prevStructLowBar  = na
+    var int   lastAcceptedType  = 0
+
+    altH = false
+    altL = false
+
+    if isPivotHigh
+        pivotHighVal = srcH[1]
+        if lastAcceptedType != 1
+            prevStructHigh    := structHigh
+            prevStructHighBar := structHighBar
+            structHigh        := pivotHighVal
+            structHighBar     := bar_index - 1
+            lastAcceptedType  := 1
+            altH              := true
+        else if pivotHighVal > structHigh
+            structHigh    := pivotHighVal
+            structHighBar := bar_index - 1
+
+    if isPivotLow
+        pivotLowVal = srcL[1]
+        if lastAcceptedType != -1
+            prevStructLow    := structLow
+            prevStructLowBar := structLowBar
+            structLow        := pivotLowVal
+            structLowBar     := bar_index - 1
+            lastAcceptedType := -1
+            altL             := true
+        else if pivotLowVal < structLow
+            structLow    := pivotLowVal
+            structLowBar := bar_index - 1
+
+    [structHigh, structHighBar, prevStructHigh, prevStructHighBar, structLow, structLowBar, prevStructLow, prevStructLowBar, altH, altL]
 
 // =========================================================================
 // CLASSIFIER
 // =========================================================================
-classify(aC, aP, bC, bP) =>
+isStrong(aC, aP, bC, bP) =>
     aDir = aC > aP ? 1 : aC < aP ? -1 : 0
     bDir = bC > bP ? 1 : bC < bP ? -1 : 0
-    cls = 0
-    if aDir * bDir == -1
-        cls := 1
-    else if (aDir != 0 and bDir == 0) or (aDir == 0 and bDir != 0)
-        cls := 2
-    cls
+    aDir * bDir == -1
 
 // =========================================================================
-// DRAWING HELPERS (confirmed)
+// RUN DETECTION
 // =========================================================================
-n = bar_index
-
-drawHighC(b1, p1, b2, p2, cls) =>
-    base = cls == 1 ? cStrBear : cEqBear
-    sty  = cls == 1 ? line.style_solid : line.style_dashed
-    wid  = cls == 1 ? 2 : 1
-    line.new(b1, p1, b2, p2, color = base, width = wid, style = sty)
-    label.new(b2, p2, cls == 1 ? 'MMD' : 'mmd', color = base, style = label.style_label_down, textcolor = color.white, size = size.small)
-
-drawLowC(b1, p1, b2, p2, cls) =>
-    base = cls == 1 ? cStrBull : cEqBull
-    sty  = cls == 1 ? line.style_solid : line.style_dashed
-    wid  = cls == 1 ? 2 : 1
-    line.new(b1, p1, b2, p2, color = base, width = wid, style = sty)
-    label.new(b2, p2, cls == 1 ? 'MMD' : 'mmd', color = base, style = label.style_label_up, textcolor = color.white, size = size.small)
-
-// Tentative drawings return [line, label, pivotBar, pivotPrice, isHigh]
-// stored in parallel arrays for invalidation tracking.
-drawTent(b1, p1, b2, p2, cls, isHigh) =>
-    base = isHigh ? (cls == 1 ? cStrBear : cEqBear) : (cls == 1 ? cStrBull : cEqBull)
-    css  = color.new(base, earlyT)
-    ln   = line.new(b1, p1, b2, p2, color = css, width = 1, style = line.style_dotted)
-    lb   = label.new(b2, p2, (cls == 1 ? 'MMD' : 'mmd') + '?', color = css, style = isHigh ? label.style_label_down : label.style_label_up, textcolor = color.white, size = size.tiny)
-    [ln, lb]
+[cSH, cSHbar, cpSH, cpSHbar, cSL, cSLbar, cpSL, cpSLbar, cAltH, cAltL] = detectStructPivot(high, low)
+[aSH, aSHbar, apSH, apSHbar, aSL, aSLbar, apSL, apSLbar, aAltH, aAltL] = detectStructPivot(hA,   lA)
+[bSH, bSHbar, bpSH, bpSHbar, bSL, bSLbar, bpSL, bpSLbar, bAltH, bAltL] = detectStructPivot(hB,   lB)
 
 // =========================================================================
-// STATE - confirmed
+// SWING-CYCLE SYNCHRONIZATION
+// A comparison is only valid when BOTH assets have alternated on the same
+// side within SYNC_WINDOW bars. The signal evaluates at the SECOND asset's
+// alternation, guaranteeing both curr pivots belong to the same swing
+// cycle. Without this, the earlier-confirming asset gets compared against
+// the partner's stale pivot from the previous cycle, producing spurious
+// divergences (both assets making HLs flagged as divergent because one
+// confirmed a bar later).
 // =========================================================================
-var float prevPH    = na
-var float prevPHA   = na
-var float prevPHB   = na
-var int   prevPHbar = na
-var int   lastHsig  = na
+// Pending-pair mechanism: each side (L/H) tracks whether each asset has an
+// UNCONSUMED alternation. Evaluation happens only when both assets hold an
+// unconsumed alternation simultaneously; both flags are then consumed.
+// An asset alternating on the OPPOSITE side cancels its pending flag (its
+// swing cycle moved on without a partner match). Pendings also expire after
+// SYNC_WINDOW bars. This guarantees the compared pivots come from paired
+// swing cycles - an asset's stale pivot from a prior cycle can never be
+// consumed against the partner's fresh one.
+var bool aPendL = false
+var bool bPendL = false
+var int  aPendLBar = na
+var int  bPendLBar = na
+var bool aPendH = false
+var bool bPendH = false
+var int  aPendHBar = na
+var int  bPendHBar = na
 
-var float prevPL    = na
-var float prevPLA   = na
-var float prevPLB   = na
-var int   prevPLbar = na
-var int   lastLsig  = na
+// New alternations set/refresh pendings; opposite alternations cancel them
+if aAltL
+    aPendL    := true
+    aPendLBar := bar_index
+    aPendH    := false
+if bAltL
+    bPendL    := true
+    bPendLBar := bar_index
+    bPendH    := false
+if aAltH
+    aPendH    := true
+    aPendHBar := bar_index
+    aPendL    := false
+if bAltH
+    bPendH    := true
+    bPendHBar := bar_index
+    bPendL    := false
 
-// =========================================================================
-// STATE - tentative (for invalidation)
-// =========================================================================
-var float prevPHe    = na
-var float prevPHAe   = na
-var float prevPHBe   = na
-var int   prevPHbarE = na
+// Expiry
+if aPendL and (bar_index - aPendLBar) > SYNC_WINDOW
+    aPendL := false
+if bPendL and (bar_index - bPendLBar) > SYNC_WINDOW
+    bPendL := false
+if aPendH and (bar_index - aPendHBar) > SYNC_WINDOW
+    aPendH := false
+if bPendH and (bar_index - bPendHBar) > SYNC_WINDOW
+    bPendH := false
 
-var float prevPLe    = na
-var float prevPLAe   = na
-var float prevPLBe   = na
-var int   prevPLbarE = na
+syncedL = aPendL and bPendL
+syncedH = aPendH and bPendH
 
-// Parallel arrays: each tentative drawing's line, label, pivot bar, pivot price, age
-var line[]  tLines  = array.new<line>()
-var label[] tLabels = array.new<label>()
-var int[]   tBars   = array.new<int>()
-var float[] tPrices = array.new<float>()
-var int[]   tBorn   = array.new<int>()
-var bool[]  tIsHigh = array.new<bool>()
-
-var bool sigBearH_conf = false
-var bool sigBullL_conf = false
-sigBearH_conf := false
-sigBullL_conf := false
-
-// Helper: remove tentative at index
-removeTent(i) =>
-    line.delete(array.get(tLines, i))
-    label.delete(array.get(tLabels, i))
-    array.remove(tLines,  i)
-    array.remove(tLabels, i)
-    array.remove(tBars,   i)
-    array.remove(tPrices, i)
-    array.remove(tBorn,   i)
-    array.remove(tIsHigh, i)
-
-// =========================================================================
-// INVALIDATE TENTATIVES
-// A tentative high is invalidated if any subsequent high exceeds its pivot price.
-// A tentative low is invalidated if any subsequent low falls below its pivot price.
-// Also auto-expire after `length` bars (would have confirmed by then).
-// =========================================================================
-if array.size(tLines) > 0
-    i = array.size(tLines) - 1
-    while i >= 0
-        pBar   = array.get(tBars,   i)
-        pPrice = array.get(tPrices, i)
-        born   = array.get(tBorn,   i)
-        isH    = array.get(tIsHigh, i)
-        age    = n - born
-        invalid = false
-        // Price invalidation: subsequent bar broke the pivot
-        if isH and high > pPrice and n > pBar
-            invalid := true
-        if not isH and low < pPrice and n > pBar
-            invalid := true
-        // Age expiration: never promoted to confirmed within `length` bars
-        if age >= length
-            invalid := true
-        if invalid
-            removeTent(i)
-        i -= 1
-
-// Cap total tentatives (FIFO)
-while array.size(tLines) > maxTent
-    removeTent(0)
+// Consume on evaluation
+if syncedL
+    aPendL := false
+    bPendL := false
+if syncedH
+    aPendH := false
+    bPendH := false
 
 // =========================================================================
-// CONFIRMED HIGHS
+// PIVOT HISTORY (finalized segment extremes, pushed at opposite alternation)
 // =========================================================================
-if isValid and phC != phC[1] and not na(phC)
-    if not na(prevPH) and not na(prevPHA) and not na(prevPHB)
-        cls   = classify(phAC, prevPHA, phBC, prevPHB)
-        gapOK = na(lastHsig) or (n - lastHsig) >= minGap
-        if gapOK and ((cls == 1 and showStrong) or (cls == 2 and showEqual))
-            drawHighC(prevPHbar, prevPH, n - length, phC, cls)
-            lastHsig := n
-            sigBearH_conf := true
-    prevPH    := phC
-    prevPHA   := phAC
-    prevPHB   := phBC
-    prevPHbar := n - length
+var array<float> aPivotLows  = array.new<float>()
+var array<float> bPivotLows  = array.new<float>()
+var array<float> aPivotHighs = array.new<float>()
+var array<float> bPivotHighs = array.new<float>()
+
+pushHist(array<float> arr, float val, int depth) =>
+    array.push(arr, val)
+    while array.size(arr) > depth
+        array.shift(arr)
+
+if isValid and EXTERNAL_PIVOT_DEPTH > 0
+    if aAltH and not na(aSL)
+        pushHist(aPivotLows, aSL, EXTERNAL_PIVOT_DEPTH)
+    if bAltH and not na(bSL)
+        pushHist(bPivotLows, bSL, EXTERNAL_PIVOT_DEPTH)
+    if aAltL and not na(aSH)
+        pushHist(aPivotHighs, aSH, EXTERNAL_PIVOT_DEPTH)
+    if bAltL and not na(bSH)
+        pushHist(bPivotHighs, bSH, EXTERNAL_PIVOT_DEPTH)
 
 // =========================================================================
-// CONFIRMED LOWS
+// SIGNAL TRACKING (FIFO cap)
 // =========================================================================
-if isValid and plC != plC[1] and not na(plC)
-    if not na(prevPL) and not na(prevPLA) and not na(prevPLB)
-        cls   = classify(plAC, prevPLA, plBC, prevPLB)
-        gapOK = na(lastLsig) or (n - lastLsig) >= minGap
-        if gapOK and ((cls == 1 and showStrong) or (cls == 2 and showEqual))
-            drawLowC(prevPLbar, prevPL, n - length, plC, cls)
-            lastLsig := n
-            sigBullL_conf := true
-    prevPL    := plC
-    prevPLA   := plAC
-    prevPLB   := plBC
-    prevPLbar := n - length
+var array<line>  sigLines  = array.new<line>()
+var array<label> sigLabels = array.new<label>()
+
+addSig(line ln, label lb) =>
+    array.push(sigLines,  ln)
+    array.push(sigLabels, lb)
+    while array.size(sigLabels) > MAX_SIGNALS_SHOWN
+        oldLn = array.shift(sigLines)
+        oldLb = array.shift(sigLabels)
+        if not na(oldLn)
+            line.delete(oldLn)
+        if not na(oldLb)
+            label.delete(oldLb)
 
 // =========================================================================
-// TENTATIVE HIGHS
+// DEDUP & SIGNAL STATE
 // =========================================================================
-if showEarly and isValid and phE != phE[1] and not na(phE)
-    if not na(prevPHe) and not na(prevPHAe) and not na(prevPHBe)
-        cls = classify(phAE, prevPHAe, phBE, prevPHBe)
-        if (cls == 1 and showStrong) or (cls == 2 and showEqual)
-            [ln, lb] = drawTent(prevPHbarE, prevPHe, n - earlyLen, phE, cls, true)
-            array.push(tLines,  ln)
-            array.push(tLabels, lb)
-            array.push(tBars,   n - earlyLen)
-            array.push(tPrices, phE)
-            array.push(tBorn,   n)
-            array.push(tIsHigh, true)
-    prevPHe    := phE
-    prevPHAe   := phAE
-    prevPHBe   := phBE
-    prevPHbarE := n - earlyLen
+var float lastSigLowAprev  = na
+var float lastSigLowBprev  = na
+var float lastSigHighAprev = na
+var float lastSigHighBprev = na
+
+var bool sigBearH = false
+var bool sigBullL = false
+sigBearH := false
+sigBullL := false
 
 // =========================================================================
-// TENTATIVE LOWS
+// SWING LOW MMD - evaluates when either asset alternates AND both are synced
 // =========================================================================
-if showEarly and isValid and plE != plE[1] and not na(plE)
-    if not na(prevPLe) and not na(prevPLAe) and not na(prevPLBe)
-        cls = classify(plAE, prevPLAe, plBE, prevPLBe)
-        if (cls == 1 and showStrong) or (cls == 2 and showEqual)
-            [ln, lb] = drawTent(prevPLbarE, prevPLe, n - earlyLen, plE, cls, false)
-            array.push(tLines,  ln)
-            array.push(tLabels, lb)
-            array.push(tBars,   n - earlyLen)
-            array.push(tPrices, plE)
-            array.push(tBorn,   n)
-            array.push(tIsHigh, false)
-    prevPLe    := plE
-    prevPLAe   := plAE
-    prevPLBe   := plBE
-    prevPLbarE := n - earlyLen
+if isValid and syncedL and barstate.isconfirmed
+    aCurrL = aSL
+    aPrevL = apSL
+    bCurrL = bSL
+    bPrevL = bpSL
+
+    if not na(aCurrL) and not na(aPrevL) and not na(bCurrL) and not na(bPrevL)
+        sameAsLast = not na(lastSigLowAprev) and not na(lastSigLowBprev) and aPrevL == lastSigLowAprev and bPrevL == lastSigLowBprev
+
+        if not sameAsLast and isStrong(aCurrL, aPrevL, bCurrL, bPrevL)
+            externalOK = EXTERNAL_PIVOT_DEPTH == 0
+            if not externalOK
+                aSize    = array.size(aPivotLows)
+                bSize    = array.size(bPivotLows)
+                aHistMin = aSize > 0 ? array.min(aPivotLows) : float(na)
+                bHistMin = bSize > 0 ? array.min(bPivotLows) : float(na)
+                aIsExt   = not na(aHistMin) and aCurrL <= aHistMin
+                bIsExt   = not na(bHistMin) and bCurrL <= bHistMin
+                externalOK := (aSize == 0 and bSize == 0) or aIsExt or bIsExt
+
+            if externalOK
+                line ln = na
+                if not na(cpSLbar) and not na(cpSL) and not na(cSLbar) and not na(cSL)
+                    ln := line.new(cpSLbar, cpSL, cSLbar, cSL, color = cBull, width = 2, style = line.style_solid)
+                anchorBar   = not na(cSLbar) ? cSLbar : bar_index
+                anchorPrice = not na(cSL)    ? cSL    : low
+                lb = label.new(anchorBar, anchorPrice, 'MMD', color = cBull, style = label.style_label_up, textcolor = color.white, size = size.small)
+                addSig(ln, lb)
+                lastSigLowAprev := aPrevL
+                lastSigLowBprev := bPrevL
+                sigBullL        := true
 
 // =========================================================================
-// ALERTS
+// SWING HIGH MMD - evaluates when either asset alternates AND both are synced
 // =========================================================================
-alertcondition(sigBearH_conf, 'MMD Bearish (confirmed)', 'MMD bearish divergence confirmed at swing high')
-alertcondition(sigBullL_conf, 'MMD Bullish (confirmed)', 'MMD bullish divergence confirmed at swing low')
+if isValid and syncedH and barstate.isconfirmed
+    aCurrH = aSH
+    aPrevH = apSH
+    bCurrH = bSH
+    bPrevH = bpSH
+
+    if not na(aCurrH) and not na(aPrevH) and not na(bCurrH) and not na(bPrevH)
+        sameAsLast = not na(lastSigHighAprev) and not na(lastSigHighBprev) and aPrevH == lastSigHighAprev and bPrevH == lastSigHighBprev
+
+        if not sameAsLast and isStrong(aCurrH, aPrevH, bCurrH, bPrevH)
+            externalOK = EXTERNAL_PIVOT_DEPTH == 0
+            if not externalOK
+                aSize    = array.size(aPivotHighs)
+                bSize    = array.size(bPivotHighs)
+                aHistMax = aSize > 0 ? array.max(aPivotHighs) : float(na)
+                bHistMax = bSize > 0 ? array.max(bPivotHighs) : float(na)
+                aIsExt   = not na(aHistMax) and aCurrH >= aHistMax
+                bIsExt   = not na(bHistMax) and bCurrH >= bHistMax
+                externalOK := (aSize == 0 and bSize == 0) or aIsExt or bIsExt
