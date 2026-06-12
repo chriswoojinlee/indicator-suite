@@ -1,36 +1,31 @@
 // ═══════════════════════════════════════════════════════════════
-// CAPITULATION RETEST — 12H (FINAL v4)
+// CAPITULATION RETEST — 12H
 // ═══════════════════════════════════════════════════════════════
-// MM-style passive accumulation. Proactive compound limits.
-// One order per 12H candle. No range stop. Hard inval only.
-// Closest possible adaptation of mentor's 2D mechanics.
 //@version=6
-strategy("Capitulation Retest 12H",
+strategy("Capitulation Retest",
      overlay            = true,
      pyramiding         = 3,
      default_qty_type   = strategy.percent_of_equity,
-     default_qty_value  = 75,
+     default_qty_value  = 25,
      commission_type    = strategy.commission.percent,
      commission_value   = 0,
      slippage           = 0,
      margin_long        = 1,
      margin_short       = 1,
      calc_on_every_tick = true,
-     process_orders_on_close = true)
+     process_orders_on_close = false)
 
 // ── PARAMETERS ───────────────────────────────────────────────
 
-WICK_THR    = 2.725
+WICK_PCT    = input.float(2.35, "Wick Threshold %", step=0.1)
 TP_FIB      = 0.57
-IMPULSE     = 2
+IMPULSE     = 1
 HARD_PCT    = 12.247
 VALID_TF    = timeframe.in_seconds() / 3600.0 == 12
 
 QTY_1       = 2
 QTY_2       = 3
 QTY_3       = 5
-
-// ── VISUALS ──────────────────────────────────────────────────
 
 colLong  = input.color(color.green, "Long Color",  group="Visuals")
 colShort = input.color(color.red,   "Short Color", group="Visuals")
@@ -57,14 +52,13 @@ for i = 1 to IMPULSE
     else
         break
 
-// ── DETECTION ────────────────────────────────────────────────
+// ── DETECTION (confirmed bars only) ─────────────────────────
 
-upperQ = VALID_TF and upperWickPct >= WICK_THR and consecBull >= IMPULSE
-lowerQ = VALID_TF and lowerWickPct >= WICK_THR and consecBear >= IMPULSE
+upperQ = VALID_TF and barstate.isconfirmed and upperWickPct >= WICK_PCT and consecBull >= IMPULSE
+lowerQ = VALID_TF and barstate.isconfirmed and lowerWickPct >= WICK_PCT and consecBear >= IMPULSE
 
 bool isLowerCap = false
 bool isUpperCap = false
-
 if lowerQ and upperQ
     if lowerWick >= upperWick
         isLowerCap := true
@@ -75,90 +69,140 @@ else if lowerQ
 else if upperQ
     isUpperCap := true
 
+// Sequence extremes: trigger candle + IMPULSE preceding candles
+float seqHigh = high
+float seqLow  = low
+for i = 1 to IMPULSE
+    seqHigh := math.max(seqHigh, high[i])
+    seqLow  := math.min(seqLow,  low[i])
+
 // ── STATE ────────────────────────────────────────────────────
 
-var int   dir            = 0
-var float rangeHigh      = na
-var float rangeLow       = na
-var float tp             = na
-var float hardLvl        = na
-var float initialEntry   = na
-var int   entryCount     = 0
-var int   setupBarIdx    = 0
-var bool  initialPlaced  = false
-var int   prevOpenTrades = 0
-var int   lastFillBar    = -1
+var int   dir             = 0
+var float rangeHigh       = na
+var float rangeLow        = na
+var float tp              = na
+var float hardLvl         = na
+var float initialEntry    = na
+var int   setupBarIdx     = 0
+var bool  s1Placed        = false
+var bool  s1Filled        = false
+var bool  s2Placed        = false
+var bool  s2Filled        = false
+var bool  s3Placed        = false
+var bool  s3Filled        = false
+var int   lastFillBar     = -1
+var bool  hadPosition     = false
+var int   closedWatermark = 0
 
 calcTP(float rH, float rL, int d) =>
     d == -1 ? rH - TP_FIB * (rH - rL) : rL + TP_FIB * (rH - rL)
-
 calcHard(float rH, float rL, int d) =>
     d == -1 ? rH * (1 + HARD_PCT / 100) : rL * (1 - HARD_PCT / 100)
 
 // ── NEW SETUP ────────────────────────────────────────────────
-
-bool justFormed = false
+// Range initialized from the FULL sequence (trigger + impulse candles).
 
 if dir == 0
     if isLowerCap
-        dir := -1, rangeHigh := high, rangeLow := low
-        initialEntry := close
-        tp := calcTP(high, low, -1), hardLvl := calcHard(high, low, -1)
-        entryCount := 0, setupBarIdx := bar_index, initialPlaced := false
-        prevOpenTrades := 0, lastFillBar := -1
-        justFormed := true
+        dir := -1, rangeHigh := seqHigh, rangeLow := seqLow, initialEntry := close
+        tp := calcTP(seqHigh, seqLow, -1), hardLvl := calcHard(seqHigh, seqLow, -1)
+        setupBarIdx := bar_index, lastFillBar := -1
+        s1Placed := false, s1Filled := false
+        s2Placed := false, s2Filled := false
+        s3Placed := false, s3Filled := false
+        hadPosition := false
+        closedWatermark := strategy.closedtrades
     else if isUpperCap
-        dir := 1, rangeHigh := high, rangeLow := low
-        initialEntry := close
-        tp := calcTP(high, low, 1), hardLvl := calcHard(high, low, 1)
-        entryCount := 0, setupBarIdx := bar_index, initialPlaced := false
-        prevOpenTrades := 0, lastFillBar := -1
-        justFormed := true
+        dir := 1, rangeHigh := seqHigh, rangeLow := seqLow, initialEntry := close
+        tp := calcTP(seqHigh, seqLow, 1), hardLvl := calcHard(seqHigh, seqLow, 1)
+        setupBarIdx := bar_index, lastFillBar := -1
+        s1Placed := false, s1Filled := false
+        s2Placed := false, s2Filled := false
+        s3Placed := false, s3Filled := false
+        hadPosition := false
+        closedWatermark := strategy.closedtrades
 
-// ── ENTRIES (one per candle) ─────────────────────────────────
-// Initial: limit at cap candle close.
-// Compounds: standing limit at range extreme.
-// Time gate: no new entry on the same bar as a previous fill.
+// ── FILL DETECTION ───────────────────────────────────────────
+// Open trades: by entry ID. Closed trades: only beyond watermark.
+
+bool s1Open = false
+bool s2Open = false
+bool s3Open = false
+float s2FillPrice = na
+float s3FillPrice = na
+if strategy.opentrades > 0
+    for i = 0 to strategy.opentrades - 1
+        string eid = strategy.opentrades.entry_id(i)
+        if eid == "S1" or eid == "L1"
+            s1Open := true
+        if eid == "S2" or eid == "L2"
+            s2Open := true
+            s2FillPrice := strategy.opentrades.entry_price(i)
+        if eid == "S3" or eid == "L3"
+            s3Open := true
+            s3FillPrice := strategy.opentrades.entry_price(i)
+
+// Closed-trade detection: ONLY trades opened after this setup began
+if dir != 0 and strategy.closedtrades > closedWatermark
+    for i = closedWatermark to strategy.closedtrades - 1
+        string cid = strategy.closedtrades.entry_id(i)
+        if (cid == "S1" or cid == "L1") and not s1Filled
+            s1Filled := true
+        if (cid == "S2" or cid == "L2") and not s2Filled
+            s2Filled := true
+        if (cid == "S3" or cid == "L3") and not s3Filled
+            s3Filled := true
+
+if dir != 0 and s1Open and not s1Filled
+    s1Filled := true
+    lastFillBar := bar_index
+
+if dir != 0 and s2Open and not s2Filled
+    s2Filled := true
+    lastFillBar := bar_index
+    if dir == -1 and not na(s2FillPrice) and s2FillPrice > rangeHigh
+        rangeHigh := s2FillPrice
+    if dir == 1 and not na(s2FillPrice) and s2FillPrice < rangeLow
+        rangeLow := s2FillPrice
+    tp := calcTP(rangeHigh, rangeLow, dir)
+    hardLvl := calcHard(rangeHigh, rangeLow, dir)
+
+if dir != 0 and s3Open and not s3Filled
+    s3Filled := true
+    lastFillBar := bar_index
+    if dir == -1 and not na(s3FillPrice) and s3FillPrice > rangeHigh
+        rangeHigh := s3FillPrice
+    if dir == 1 and not na(s3FillPrice) and s3FillPrice < rangeLow
+        rangeLow := s3FillPrice
+    tp := calcTP(rangeHigh, rangeLow, dir)
+    hardLvl := calcHard(rangeHigh, rangeLow, dir)
+
+// ── ENTRIES (one per candle, each placed once) ───────────────
+// S2/S3 limits at range extreme — only swept levels trigger compounds.
 
 if dir != 0 and bar_index > setupBarIdx
     bool canPlace = bar_index > lastFillBar
-
-    if not initialPlaced and canPlace
+    if not s1Placed and canPlace
         if dir == -1
             strategy.entry("S1", strategy.short, qty=QTY_1, limit=initialEntry)
         else
             strategy.entry("L1", strategy.long, qty=QTY_1, limit=initialEntry)
-        initialPlaced := true
-        entryCount := 1
-
-    if initialPlaced and entryCount < 3 and canPlace
-        float cq = entryCount == 1 ? QTY_2 : QTY_3
-        string eid = (dir == -1 ? "S" : "L") + str.tostring(entryCount + 1)
+        s1Placed := true
+    if s1Filled and not s2Placed and canPlace
         if dir == -1
-            strategy.entry(eid, strategy.short, qty=cq, limit=rangeHigh)
+            strategy.entry("S2", strategy.short, qty=QTY_2, limit=rangeHigh)
         else
-            strategy.entry(eid, strategy.long, qty=cq, limit=rangeLow)
+            strategy.entry("L2", strategy.long, qty=QTY_2, limit=rangeLow)
+        s2Placed := true
+    if s2Filled and not s3Placed and canPlace
+        if dir == -1
+            strategy.entry("S3", strategy.short, qty=QTY_3, limit=rangeHigh)
+        else
+            strategy.entry("L3", strategy.long, qty=QTY_3, limit=rangeLow)
+        s3Placed := true
 
-// ── DETECT FILLS → UPDATE RANGE ──────────────────────────────
-// Range only expands when a compound fills.
-// One-candle gate: lastFillBar prevents stacking.
-
-int openNow = strategy.opentrades
-if dir != 0 and openNow > prevOpenTrades
-    lastFillBar := bar_index
-    if openNow > 1
-        // Compound filled — expand range to where it filled
-        if dir == -1 and high > rangeHigh
-            rangeHigh := high
-        if dir == 1 and low < rangeLow
-            rangeLow := low
-        tp := calcTP(rangeHigh, rangeLow, dir)
-        hardLvl := calcHard(rangeHigh, rangeLow, dir)
-    entryCount := openNow
-
-prevOpenTrades := openNow
-
-// Wick-side expansion (improves TP only)
+// Wick-side expansion (TP only)
 if dir == -1 and low < rangeLow
     rangeLow := low
     tp := calcTP(rangeHigh, rangeLow, -1)
@@ -166,49 +210,70 @@ if dir == 1 and high > rangeHigh
     rangeHigh := high
     tp := calcTP(rangeHigh, rangeLow, 1)
 
-// ── EXITS (TP only — no range stop) ─────────────────────────
+// ── EXITS ────────────────────────────────────────────────────
 
-if dir == -1 and entryCount >= 1
+if dir == -1 and s1Placed
     strategy.exit("X1", from_entry="S1", limit=tp)
-if dir == -1 and entryCount >= 2
+if dir == -1 and s2Placed
     strategy.exit("X2", from_entry="S2", limit=tp)
-if dir == -1 and entryCount >= 3
+if dir == -1 and s3Placed
     strategy.exit("X3", from_entry="S3", limit=tp)
-
-if dir == 1 and entryCount >= 1
+if dir == 1 and s1Placed
     strategy.exit("X1", from_entry="L1", limit=tp)
-if dir == 1 and entryCount >= 2
+if dir == 1 and s2Placed
     strategy.exit("X2", from_entry="L2", limit=tp)
-if dir == 1 and entryCount >= 3
+if dir == 1 and s3Placed
     strategy.exit("X3", from_entry="L3", limit=tp)
 
-// ── HARD INVALIDATION (bar-close only) ───────────────────────
+// ── POSITION TRACKING ────────────────────────────────────────
 
+if dir != 0 and strategy.position_size != 0
+    hadPosition := true
+if dir != 0 and strategy.closedtrades > closedWatermark
+    hadPosition := true
+
+// ── TIME-BASED INVALIDATION ──────────────────────────────────
+// The retest must occur promptly for the ranging thesis to hold.
+// If S1 hasn't filled within 10 bars (5 days), the setup is expired.
+
+if dir != 0 and s1Placed and not s1Filled and not hadPosition and bar_index > setupBarIdx + 10
+    strategy.cancel_all()
+    s1Placed := false, s1Filled := false, s2Placed := false, s2Filled := false, s3Placed := false, s3Filled := false
+    hadPosition := false
+    dir := 0
+
+// ── HARD INVALIDATION (bar-close) ────────────────────────────
+
+bool anyFilled = s1Filled or s2Filled or s3Filled
 bool hardInval = false
-if dir == -1 and entryCount > 0 and close > hardLvl
+if dir == -1 and anyFilled and close > hardLvl
     hardInval := true
-if dir == 1 and entryCount > 0 and close < hardLvl
+if dir == 1 and anyFilled and close < hardLvl
     hardInval := true
-
 if hardInval and dir != 0
     strategy.close_all(comment="HARD INVAL")
-    dir := 0, entryCount := 0, initialPlaced := false
+    strategy.cancel_all()
+    s1Placed := false, s1Filled := false, s2Placed := false, s2Filled := false, s3Placed := false, s3Filled := false
+    hadPosition := false
+    dir := 0
 
 // ── RESET ON FLAT ────────────────────────────────────────────
 
-if dir != 0 and strategy.position_size == 0 and strategy.opentrades == 0 and entryCount >= 3 and bar_index > setupBarIdx + 1
-    dir := 0, entryCount := 0, initialPlaced := false
+if dir != 0 and hadPosition and strategy.position_size == 0 and strategy.opentrades == 0
+    strategy.cancel_all()
+    s1Placed := false, s1Filled := false, s2Placed := false, s2Filled := false, s3Placed := false, s3Filled := false
+    hadPosition := false
+    dir := 0
 
 if dir != 0 and strategy.position_size == 0 and strategy.opentrades == 0 and bar_index > setupBarIdx + 120
-    dir := 0, entryCount := 0, initialPlaced := false
+    strategy.cancel_all()
+    s1Placed := false, s1Filled := false, s2Placed := false, s2Filled := false, s3Placed := false, s3Filled := false
+    hadPosition := false
+    dir := 0
 
 // ── ALERTS ───────────────────────────────────────────────────
 
-if justFormed
-    string dirStr = dir == -1 ? "SHORT" : "LONG"
-    alert(syminfo.ticker + " 12H — " + dirStr + " Capitulation Setup. Entry at " + str.tostring(initialEntry, format.mintick) + ". TP: " + str.tostring(tp, format.mintick), alert.freq_once_per_bar)
-
-alertcondition(isLowerCap or isUpperCap, "Setup Forming", "Capitulation retest setup detected.")
+alertcondition(isLowerCap or isUpperCap, "Setup", "Capitulation setup detected.")
 
 // ── STATUS LABEL ─────────────────────────────────────────────
 
@@ -219,10 +284,19 @@ if not na(statusLbl)
 if VALID_TF
     int lblX = bar_index + 12
     if dir == 0
-        statusLbl := label.new(lblX, close, "The Strategy is in Idle Mode, patience requested.\n\nAnd simply wait for a setup to form.", color=color.new(color.gray, 90), textcolor=color.gray, style=label.style_label_left, size=size.large, textalign=text.align_left)
+        statusLbl := label.new(lblX, close, "The strategy is in idle mode, patience requested.\n\nAnd simply wait for a setup to form.", color=color.new(color.gray, 90), textcolor=color.gray, style=label.style_label_left, size=size.large, textalign=text.align_left)
     else
-        string candleType = dir == -1 ? "Bearish" : "Bullish"
-        string dirWord    = dir == -1 ? "Short" : "Long"
-        color  dirCol     = dir == -1 ? colShort : colLong
-        string txt = "A " + candleType + " Candle Printed. Enter a Capitulation Setup " + dirWord + " on this candle close!\n\nTP: " + str.tostring(tp, format.mintick) + "\nHard: " + str.tostring(hardLvl, format.mintick)
+        string dirWord = dir == -1 ? "short" : "long"
+        color  dirCol  = dir == -1 ? colShort : colLong
+        string txt = ""
+        if not s1Filled
+            string candleType = dir == -1 ? "Bearish" : "Bullish"
+            txt := "A " + candleType + " Candle Printed. Enter a Capitulation Setup " + dirWord + " on this candle close!"
+        else if (not s2Filled) or (s2Filled and not s3Filled)
+            string ab = dir == -1 ? "above" : "below"
+            string hl = dir == -1 ? "high" : "low"
+            txt := "Set a " + dirWord + " compound order " + ab + " the range " + hl + "!"
+        else
+            txt := dirWord + " position fully compounded."
+        txt += "\n\nTP: " + str.tostring(tp, format.mintick) + "\nHard Invalidation: " + str.tostring(hardLvl, format.mintick)
         statusLbl := label.new(lblX, close, txt, color=color.new(dirCol, 90), textcolor=dirCol, style=label.style_label_left, size=size.large, textalign=text.align_left)
