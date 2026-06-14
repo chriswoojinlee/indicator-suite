@@ -127,11 +127,14 @@ isStrong(aC, aP, bC, bP) =>
 // Pending-pair mechanism: each side (L/H) tracks whether each asset has an
 // UNCONSUMED alternation. Evaluation happens only when both assets hold an
 // unconsumed alternation simultaneously; both flags are then consumed.
-// An asset alternating on the OPPOSITE side cancels its pending flag (its
-// swing cycle moved on without a partner match). Pendings also expire after
-// SYNC_WINDOW bars. This guarantees the compared pivots come from paired
-// swing cycles - an asset's stale pivot from a prior cycle can never be
-// consumed against the partner's fresh one.
+// Pendings expire after SYNC_WINDOW bars. This guarantees the compared
+// pivots come from paired swing cycles - an asset's stale pivot from a
+// prior cycle can never be consumed against the partner's fresh one.
+// NOTE: an asset alternating on the opposite side does NOT cancel its
+// pending - the opposite alternation finalizes the pivot, it doesn't
+// invalidate it. Cancelling here suppressed legitimate signals at V-tops/
+// V-bottoms where one asset completes its reversal before the partner's
+// same-side fractal confirms.
 var bool aPendL = false
 var bool bPendL = false
 var int  aPendLBar = na
@@ -141,23 +144,18 @@ var bool bPendH = false
 var int  aPendHBar = na
 var int  bPendHBar = na
 
-// New alternations set/refresh pendings; opposite alternations cancel them
 if aAltL
     aPendL    := true
     aPendLBar := bar_index
-    aPendH    := false
 if bAltL
     bPendL    := true
     bPendLBar := bar_index
-    bPendH    := false
 if aAltH
     aPendH    := true
     aPendHBar := bar_index
-    aPendL    := false
 if bAltH
     bPendH    := true
     bPendHBar := bar_index
-    bPendL    := false
 
 // Expiry
 if aPendL and (bar_index - aPendLBar) > SYNC_WINDOW
@@ -290,3 +288,26 @@ if isValid and syncedH and barstate.isconfirmed
                 aIsExt   = not na(aHistMax) and aCurrH >= aHistMax
                 bIsExt   = not na(bHistMax) and bCurrH >= bHistMax
                 externalOK := (aSize == 0 and bSize == 0) or aIsExt or bIsExt
+
+            if externalOK
+                line ln = na
+                if not na(cpSHbar) and not na(cpSH) and not na(cSHbar) and not na(cSH)
+                    ln := line.new(cpSHbar, cpSH, cSHbar, cSH, color = cBear, width = 2, style = line.style_solid)
+                anchorBar   = not na(cSHbar) ? cSHbar : bar_index
+                anchorPrice = not na(cSH)    ? cSH    : high
+                lb = label.new(anchorBar, anchorPrice, 'MMD', color = cBear, style = label.style_label_down, textcolor = color.white, size = size.small)
+                addSig(ln, lb)
+                lastSigHighAprev := aPrevH
+                lastSigHighBprev := bPrevH
+                sigBearH         := true
+
+// =========================================================================
+// ALERTS
+// =========================================================================
+// Transparent plots satisfy Pine's output requirement (display.none and
+// conditional drawings don't count toward it)
+plot(sigBullL ? 1 : 0, 'Bull MMD', color = color.new(color.white, 100), display = display.data_window)
+plot(sigBearH ? 1 : 0, 'Bear MMD', color = color.new(color.white, 100), display = display.data_window)
+
+alertcondition(sigBearH, 'MMD Bearish', 'MMD bearish divergence at swing high')
+alertcondition(sigBullL, 'MMD Bullish', 'MMD bullish divergence at swing low')
