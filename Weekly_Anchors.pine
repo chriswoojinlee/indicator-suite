@@ -2,7 +2,7 @@
 // https://mozilla.org/MPL/2.0/
 
 //@version=6
-indicator("Weekly Anchors", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("Periodic Levels", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // 1. WEEKEND EXTREME: weekend high/low exceeding all 4 prior weekdays (cmeC phase)
 //    - Emitted as a LIVE PREVIEW during the weekend, anchored to the wick that set wH/wL
@@ -41,6 +41,9 @@ indicator("Weekly Anchors", overlay=true, max_lines_count=500, max_labels_count=
 string GRP_EXT   = "Weekend Extremes"
 string GRP_GAP   = "CME Gap Fill"
 string GRP_WK    = "Weekly Open"
+string GRP_DAILY = "Daily Open"
+string GRP_MONTH = "Monthly Open"
+string GRP_QY    = "Quarterly / Yearly"
 string GRP_ALERT = "Alerts"
 
 highColor  = input.color(color.new(color.red,    25), "High Color",           group=GRP_EXT,  display=display.none)
@@ -59,6 +62,24 @@ showWkOpen      = input.bool(true, "Show Weekly Open Line", group=GRP_WK, displa
 wkOpenColor     = input.color(color.new(color.white, 50), "Color",            group=GRP_WK, display=display.none)
 wkOpenLineWidth = input.int(1, "Line Width", minval=1, maxval=4,              group=GRP_WK, display=display.none)
 wkOpenStyle     = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_WK, display=display.none)
+
+showDailyOpen   = input.bool(false, "Show Daily Open",  group=GRP_DAILY, display=display.none)
+dailyColor      = input.color(color.new(color.silver, 60), "Color",      group=GRP_DAILY, display=display.none)
+dailyWidth      = input.int(1, "Line Width", minval=1, maxval=4,         group=GRP_DAILY, display=display.none)
+dOpenStyle      = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_DAILY, display=display.none)
+
+showMonthOpen   = input.bool(true, "Show Monthly Open",  group=GRP_MONTH, display=display.none)
+monthColor      = input.color(color.new(color.orange, 50), "Color",      group=GRP_MONTH, display=display.none)
+monthWidth      = input.int(1, "Line Width", minval=1, maxval=4,         group=GRP_MONTH, display=display.none)
+mOpenStyle      = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_MONTH, display=display.none)
+
+showQtrOpen     = input.bool(false, "Show Quarterly Open",  group=GRP_QY, display=display.none)
+qtrColor        = input.color(color.new(color.teal, 50), "Quarterly Color", group=GRP_QY, display=display.none)
+qOpenStyle      = input.string("Solid", "Q Line Style", options=["Solid","Dashed","Dotted"], group=GRP_QY, display=display.none)
+showYearOpen    = input.bool(false, "Show Yearly Open",  group=GRP_QY, display=display.none)
+yearColor       = input.color(color.new(#FFD700, 50), "Yearly Color",    group=GRP_QY, display=display.none)
+yOpenStyle      = input.string("Solid", "Y Line Style", options=["Solid","Dashed","Dotted"], group=GRP_QY, display=display.none)
+qyWidth         = input.int(1, "Line Width", minval=1, maxval=4,        group=GRP_QY, display=display.none)
 
 alertOnSweep   = input.bool(true, "Alert On Sweep",    group=GRP_ALERT, display=display.none)
 alertOnGapFill = input.bool(true, "Alert On Gap Fill", group=GRP_ALERT, display=display.none)
@@ -87,6 +108,26 @@ getLineStyle(string s) =>
 
 f_safeBI(int storedBI) =>
     math.max(storedBI, bar_index - biLookback)
+
+// Draw (or clear) a single period reference level. Returns new line/label
+// so the caller can reassign its var state. Opens use solid, closes dashed.
+f_drawPeriodLevel(line oldLn, label oldLb, bool show, float p, int bi,
+                  color col, int w, string lstyle, string txt) =>
+    line.delete(oldLn)
+    label.delete(oldLb)
+    line  newLn = na
+    label newLb = na
+    if show and not na(p) and not na(bi)
+        int x1 = f_safeBI(bi)
+        int x2 = math.max(bar_index, x1 + 1)
+        newLn := line.new(x1, p, x2, p, color=col, width=w, style=lstyle,
+             extend=extend.right, xloc=xloc.bar_index)
+        if showLabels
+            newLb := label.new(bar_index, p, txt,
+                 color=color.new(color.black, 100), textcolor=col,
+                 style=close < p ? label.style_label_lower_left : label.style_label_upper_left,
+                 size=size.small, xloc=xloc.bar_index)
+    [newLn, newLb]
 
 // ─────────────────────────────────────────────────────────────
 // CHART-SIDE SESSION TRANSITION TRACKING
@@ -292,6 +333,69 @@ f_weeklyOpen() =>
     [wkOpen, wkOpenT, wkOpenAnc]
 
 // ─────────────────────────────────────────────────────────────
+// 1H FUNCTION: PERIOD REFERENCE LEVELS
+//
+// Detects daily, weekly close, monthly, quarterly, and yearly
+// boundaries at 1H resolution and captures open/close prices.
+// Daily/monthly/quarterly/yearly use UTC boundaries.
+// Weekly close uses the same Sun 19:00 CT boundary as weekly open.
+// Returns 14 values: [O, C, anchorTime] per period + weekly close.
+// ─────────────────────────────────────────────────────────────
+
+f_periodLevels() =>
+    int mo  = month(time)
+    int yr  = year(time)
+
+    // ── Daily (UTC day boundary) ──
+    bool newDay = ta.change(time("D")) != 0
+    var float pDO = na, var int pDA = na
+    if newDay
+        pDO := open
+        pDA := time
+    else if na(pDO)
+        pDO := open
+        pDA := time
+
+    // ── Monthly (UTC month boundary) ──
+    var int prevMo = -1
+    bool newMonth = prevMo != -1 and mo != prevMo
+    var float pMO = na, var int pMA = na
+    if newMonth
+        pMO := open
+        pMA := time
+    else if prevMo == -1
+        pMO := open
+        pMA := time
+    prevMo := mo
+
+    // ── Quarterly (Jan/Apr/Jul/Oct 1st, UTC) ──
+    int qtr = int(math.ceil(mo / 3.0))
+    var int prevQtr = -1
+    bool newQtr = prevQtr != -1 and qtr != prevQtr
+    var float pQO = na, var int pQA = na
+    if newQtr
+        pQO := open
+        pQA := time
+    else if prevQtr == -1
+        pQO := open
+        pQA := time
+    prevQtr := qtr
+
+    // ── Yearly (Jan 1st, UTC) ──
+    var int prevYr = -1
+    bool newYear = prevYr != -1 and yr != prevYr
+    var float pYO = na, var int pYA = na
+    if newYear
+        pYO := open
+        pYA := time
+    else if prevYr == -1
+        pYO := open
+        pYA := time
+    prevYr := yr
+
+    [pDO, pDA, pMO, pMA, pQO, pQA, pYO, pYA]
+
+// ─────────────────────────────────────────────────────────────
 // REQUEST AT 1H
 // ─────────────────────────────────────────────────────────────
 
@@ -303,6 +407,9 @@ f_weeklyOpen() =>
 
 [h1WkOpenP, h1WkOpenT, h1WkOpenAnc] = request.security(
     syminfo.tickerid, "60", f_weeklyOpen(), gaps=barmerge.gaps_off)
+
+[h1DO, h1DA, h1MO, h1MA, h1QO, h1QA, h1YO, h1YA] = request.security(
+    syminfo.tickerid, "60", f_periodLevels(), gaps=barmerge.gaps_off)
 
 // ─────────────────────────────────────────────────────────────
 // LEVEL STORAGE — Permanent (Weekend Extremes after promotion)
@@ -353,6 +460,15 @@ var int   wkOpenT      = na
 var int   wkOpenBarIdx = na
 var line  wkOpenLine   = na
 var label wkOpenLabel  = na
+
+// ─────────────────────────────────────────────────────────────
+// LEVEL STATE — Period Reference Levels
+// ─────────────────────────────────────────────────────────────
+
+var float dOpenP = na,  var int dOpenBI = na,  var line dOpenLn = na,  var label dOpenLb = na
+var float mOpenP = na,  var int mOpenBI = na,  var line mOpenLn = na,  var label mOpenLb = na
+var float qOpenP = na,  var int qOpenBI = na,  var line qOpenLn = na,  var label qOpenLb = na
+var float yOpenP = na,  var int yOpenBI = na,  var line yOpenLn = na,  var label yOpenLb = na
 
 // ─────────────────────────────────────────────────────────────
 // WEEKEND TRANSITION DETECTION
@@ -417,6 +533,48 @@ if newWkOpenEmit
     float ratio  = barDurMs > 0 ? (time - h1WkOpenT) / float(barDurMs) : 0.0
     int offset   = math.max(0, int(math.ceil(ratio)))
     wkOpenBarIdx := math.max(0, bar_index - offset)
+
+// ─────────────────────────────────────────────────────────────
+// PERIOD LEVEL EMISSIONS
+//
+// Each period boundary (daily/weekly close/monthly/quarterly/yearly)
+// gets an anchor bar_index computed from the time offset formula,
+// same as weekly open. Open and close for each period share an anchor.
+// ─────────────────────────────────────────────────────────────
+
+// Helper: compute anchor bar_index from a 1H anchor time
+f_anchorBI(int ancT) =>
+    int bms = timeframe.in_seconds(timeframe.period) * 1000
+    float r = bms > 0 ? (time - ancT) / float(bms) : 0.0
+    math.max(0, bar_index - math.max(0, int(math.ceil(r))))
+
+// ── Daily ──
+var int lastDA = -1
+if not na(h1DA) and h1DA != lastDA
+    lastDA  := h1DA
+    dOpenP  := h1DO
+    dOpenBI := f_anchorBI(h1DA)
+
+// ── Monthly ──
+var int lastMA = -1
+if not na(h1MA) and h1MA != lastMA
+    lastMA  := h1MA
+    mOpenP  := h1MO
+    mOpenBI := f_anchorBI(h1MA)
+
+// ── Quarterly ──
+var int lastQA = -1
+if not na(h1QA) and h1QA != lastQA
+    lastQA  := h1QA
+    qOpenP  := h1QO
+    qOpenBI := f_anchorBI(h1QA)
+
+// ── Yearly ──
+var int lastYA = -1
+if not na(h1YA) and h1YA != lastYA
+    lastYA  := h1YA
+    yOpenP  := h1YO
+    yOpenBI := f_anchorBI(h1YA)
 
 // ─────────────────────────────────────────────────────────────
 // PREVIEW UPDATE (during weekend)
@@ -756,7 +914,84 @@ if showGap and array.size(gapPrice) > 0
                  size=size.small, xloc=xloc.bar_index))
 
 // ─────────────────────────────────────────────────────────────
-// DRAW — Weekly Open
+// MERGE — Open Levels Sharing a Price
+//
+// At period boundaries that coincide (new year → Y/Q/M/W/D opens
+// share the same open price), only the most significant level is
+// drawn. Priority high→low: Y > Q > M > W > D. A lower-priority
+// level is suppressed when a higher-priority level is enabled, has
+// a value, and shares the same price (rounded to mintick).
+// ─────────────────────────────────────────────────────────────
+
+f_samePrice(float a, float b) =>
+    not na(a) and not na(b) and math.round(a / syminfo.mintick) == math.round(b / syminfo.mintick)
+
+f_sameAnchor(int a, int b) =>
+    not na(a) and not na(b) and a == b
+
+f_merge(float pa, float pb, int aa, int ab) =>
+    f_samePrice(pa, pb) or f_sameAnchor(aa, ab)
+
+bool yOn = showYearOpen  and not na(yOpenP)
+bool qOn = showQtrOpen   and not na(qOpenP)
+bool mOn = showMonthOpen and not na(mOpenP)
+bool wOn = showWkOpen    and not na(wkOpenP)
+bool dOn = showDailyOpen and not na(dOpenP)
+
+// Suppress if any higher-priority enabled level shares this price or anchor.
+bool qHid = qOn and yOn and f_merge(qOpenP, yOpenP, qOpenBI, yOpenBI)
+bool mHid = mOn and ((yOn and f_merge(mOpenP, yOpenP, mOpenBI, yOpenBI)) or (qOn and f_merge(mOpenP, qOpenP, mOpenBI, qOpenBI)))
+bool wHid = wOn and ((yOn and f_merge(wkOpenP, yOpenP, wkOpenBarIdx, yOpenBI)) or (qOn and f_merge(wkOpenP, qOpenP, wkOpenBarIdx, qOpenBI)) or (mOn and f_merge(wkOpenP, mOpenP, wkOpenBarIdx, mOpenBI)))
+bool dHid = dOn and ((yOn and f_merge(dOpenP, yOpenP, dOpenBI, yOpenBI)) or (qOn and f_merge(dOpenP, qOpenP, dOpenBI, qOpenBI)) or (mOn and f_merge(dOpenP, mOpenP, dOpenBI, mOpenBI)) or (wOn and f_merge(dOpenP, wkOpenP, dOpenBI, wkOpenBarIdx)))
+
+bool drawY = showYearOpen
+bool drawQ = showQtrOpen   and not qHid
+bool drawM = showMonthOpen and not mHid
+bool drawW = showWkOpen    and not wHid
+bool drawD = showDailyOpen and not dHid
+
+// ─────────────────────────────────────────────────────────────
+// MERGED LABEL TEXT
+//
+// Each suppressed level appends its tag to the highest-priority
+// visible level it merges with, producing e.g. "qO/mO".
+// ─────────────────────────────────────────────────────────────
+
+string yTxt = "yO"
+string qTxt = "qO"
+string mTxt = "mO"
+string wTxt = "wO"
+string dTxt = "dO"
+
+if qOn and qHid
+    yTxt += "/qO"
+
+if mOn and mHid
+    if yOn and drawY and f_merge(mOpenP, yOpenP, mOpenBI, yOpenBI)
+        yTxt += "/mO"
+    else if qOn and drawQ and f_merge(mOpenP, qOpenP, mOpenBI, qOpenBI)
+        qTxt += "/mO"
+
+if wOn and wHid
+    if yOn and drawY and f_merge(wkOpenP, yOpenP, wkOpenBarIdx, yOpenBI)
+        yTxt += "/wO"
+    else if qOn and drawQ and f_merge(wkOpenP, qOpenP, wkOpenBarIdx, qOpenBI)
+        qTxt += "/wO"
+    else if mOn and drawM and f_merge(wkOpenP, mOpenP, wkOpenBarIdx, mOpenBI)
+        mTxt += "/wO"
+
+if dOn and dHid
+    if yOn and drawY and f_merge(dOpenP, yOpenP, dOpenBI, yOpenBI)
+        yTxt += "/dO"
+    else if qOn and drawQ and f_merge(dOpenP, qOpenP, dOpenBI, qOpenBI)
+        qTxt += "/dO"
+    else if mOn and drawM and f_merge(dOpenP, mOpenP, dOpenBI, mOpenBI)
+        mTxt += "/dO"
+    else if wOn and drawW and f_merge(dOpenP, wkOpenP, dOpenBI, wkOpenBarIdx)
+        wTxt += "/dO"
+
+// ─────────────────────────────────────────────────────────────
+// DRAW — Weekly Open (merge-gated)
 // ─────────────────────────────────────────────────────────────
 
 line.delete(wkOpenLine)
@@ -764,7 +999,7 @@ label.delete(wkOpenLabel)
 wkOpenLine  := na
 wkOpenLabel := na
 
-if showWkOpen and not na(wkOpenP) and not na(wkOpenBarIdx)
+if drawW and not na(wkOpenP) and not na(wkOpenBarIdx)
     int drawX1 = f_safeBI(wkOpenBarIdx)
     int drawX2 = math.max(bar_index, drawX1 + 1)
     wkOpenLine := line.new(
@@ -774,9 +1009,26 @@ if showWkOpen and not na(wkOpenP) and not na(wkOpenBarIdx)
          extend=extend.right, xloc=xloc.bar_index)
     if showLabels
         wkOpenLabel := label.new(
-             bar_index, wkOpenP, "Weekly Open",
+             bar_index, wkOpenP, wTxt,
              color=color.new(color.black, 100), textcolor=wkOpenColor,
              style=close < wkOpenP ? label.style_label_lower_left : label.style_label_upper_left,
              size=size.small, xloc=xloc.bar_index)
+
+// ─────────────────────────────────────────────────────────────
+// DRAW — Period Reference Levels (merge-gated, short-form labels)
+// ─────────────────────────────────────────────────────────────
+
+[n1, n2]   = f_drawPeriodLevel(dOpenLn, dOpenLb, drawD, dOpenP, dOpenBI, dailyColor, dailyWidth, getLineStyle(dOpenStyle), dTxt)
+dOpenLn   := n1
+dOpenLb   := n2
+[n3, n4]   = f_drawPeriodLevel(mOpenLn, mOpenLb, drawM, mOpenP, mOpenBI, monthColor, monthWidth, getLineStyle(mOpenStyle), mTxt)
+mOpenLn   := n3
+mOpenLb   := n4
+[n5, n6]   = f_drawPeriodLevel(qOpenLn, qOpenLb, drawQ, qOpenP, qOpenBI, qtrColor, qyWidth, getLineStyle(qOpenStyle), qTxt)
+qOpenLn   := n5
+qOpenLb   := n6
+[n7, n8]   = f_drawPeriodLevel(yOpenLn, yOpenLb, drawY, yOpenP, yOpenBI, yearColor, qyWidth, getLineStyle(yOpenStyle), yTxt)
+yOpenLn   := n7
+yOpenLb   := n8
 
 plot(na)
