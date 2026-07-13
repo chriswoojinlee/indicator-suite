@@ -4,8 +4,8 @@
 // BINANCE:BTCUSDT.P 12H. Capitulation wick → range → 0.57 fib
 // reversion. Probe at trigger close (S1/L1), passive compounds at
 // swept extremes (S2/L2, S3/L3), 2:3:5 tranche notional.
-// Hard invalidation 12% beyond the arming-bar sequence extreme,
-// bar-close only. Setup expires if S1 unfilled within 12 bars.
+// Hard invalidation 12.247% beyond the arming-bar sequence extreme,
+// bar-close only. Setup expires if S1 unfilled within 12 bars (6D).
 // Validated 2019-09 → 2026-07: max DD scales ≈ 18% × MAX_LEV.
 // Backtests exclude fees/slippage; hard invals exit at market.
 //@version=6
@@ -32,7 +32,9 @@ TIMEOUT  = 12
 QTY_1    = 2.0
 QTY_2    = 3.0
 QTY_3    = 5.0
-VALID_TF = timeframe.in_seconds() / 3600.0 == 12
+VALID_TF  = timeframe.in_seconds() / 3600.0 == 12
+VALID_SYM = syminfo.basecurrency == "BTC" or str.startswith(syminfo.ticker, "BTC")
+VALID_CTX = VALID_TF and VALID_SYM
 
 MAX_LEV  = input.float(0.5, "Max full-stack leverage (× equity)", minval=0.1, step=0.1,
      tooltip="Total notional across all three tranches as a multiple of equity. Expected max drawdown ≈ 18% × this value (2019–2026 sample). 0.8 ≈ 15% DD; 2.0 ≈ 35% DD.")
@@ -72,8 +74,8 @@ for i = 1 to IMPULSE
     seqHigh := math.max(seqHigh, high[i])
     seqLow  := math.min(seqLow,  low[i])
 
-upperQ = VALID_TF and barstate.isconfirmed and upperWickPct >= WICK_PCT and consecBull >= IMPULSE
-lowerQ = VALID_TF and barstate.isconfirmed and lowerWickPct >= WICK_PCT and consecBear >= IMPULSE
+upperQ = VALID_CTX and barstate.isconfirmed and upperWickPct >= WICK_PCT and consecBull >= IMPULSE
+lowerQ = VALID_CTX and barstate.isconfirmed and lowerWickPct >= WICK_PCT and consecBear >= IMPULSE
 
 bool isLowerCap = false
 bool isUpperCap = false
@@ -290,7 +292,7 @@ var label statusLbl = na
 if not na(statusLbl)
     label.delete(statusLbl)
 
-if VALID_TF
+if VALID_CTX
     int lblX = bar_index + 12
     if dir == 0
         statusLbl := label.new(lblX, close, "Idle — waiting for a setup to form.", color=color.new(color.gray, 90), textcolor=color.gray, style=label.style_label_left, size=size.large, textalign=text.align_left)
