@@ -1,7 +1,7 @@
 // This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
 
 //@version=5
-indicator("Multi-Asset MMD", "MMD", overlay = true, max_lines_count = 500, max_labels_count = 500)
+indicator("MMD", "MMD", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
 // =========================================================================
 // HARDCODED BEHAVIOR PARAMETERS (edit here if needed)
@@ -100,12 +100,16 @@ detectStructPivot(srcH, srcL) =>
     [structHigh, structHighBar, prevStructHigh, prevStructHighBar, structLow, structLowBar, prevStructLow, prevStructLowBar, altH, altL]
 
 // =========================================================================
-// CLASSIFIER
+// CLASSIFIER (sweep-XOR)
+// Divergence = exactly one asset sweeps past its prior swing while the
+// other fails to. "Fails" includes equal highs/lows - stopping exactly at
+// the prior level is a hold, not a sweep. isHigh=true compares sweeps
+// above prior highs; false compares sweeps below prior lows.
 // =========================================================================
-isStrong(aC, aP, bC, bP) =>
-    aDir = aC > aP ? 1 : aC < aP ? -1 : 0
-    bDir = bC > bP ? 1 : bC < bP ? -1 : 0
-    aDir * bDir == -1
+isSweepDiv(aC, aP, bC, bP, isHigh) =>
+    aSweep = isHigh ? aC > aP : aC < aP
+    bSweep = isHigh ? bC > bP : bC < bP
+    aSweep != bSweep
 
 // =========================================================================
 // RUN DETECTION
@@ -243,7 +247,7 @@ if isValid and syncedL and barstate.isconfirmed
     if not na(aCurrL) and not na(aPrevL) and not na(bCurrL) and not na(bPrevL)
         sameAsLast = not na(lastSigLowAprev) and not na(lastSigLowBprev) and aPrevL == lastSigLowAprev and bPrevL == lastSigLowBprev
 
-        if not sameAsLast and isStrong(aCurrL, aPrevL, bCurrL, bPrevL)
+        if not sameAsLast and isSweepDiv(aCurrL, aPrevL, bCurrL, bPrevL, false)
             externalOK = EXTERNAL_PIVOT_DEPTH == 0
             if not externalOK
                 aSize    = array.size(aPivotLows)
@@ -278,7 +282,7 @@ if isValid and syncedH and barstate.isconfirmed
     if not na(aCurrH) and not na(aPrevH) and not na(bCurrH) and not na(bPrevH)
         sameAsLast = not na(lastSigHighAprev) and not na(lastSigHighBprev) and aPrevH == lastSigHighAprev and bPrevH == lastSigHighBprev
 
-        if not sameAsLast and isStrong(aCurrH, aPrevH, bCurrH, bPrevH)
+        if not sameAsLast and isSweepDiv(aCurrH, aPrevH, bCurrH, bPrevH, true)
             externalOK = EXTERNAL_PIVOT_DEPTH == 0
             if not externalOK
                 aSize    = array.size(aPivotHighs)
