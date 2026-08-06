@@ -1,7 +1,7 @@
 // This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
 
 //@version=5
-indicator("MMD", "MMD", overlay = true, max_lines_count = 500, max_labels_count = 500)
+indicator("Multi-Asset MMD", "MMD", overlay = true, max_lines_count = 500, max_labels_count = 500)
 
 // =========================================================================
 // HARDCODED BEHAVIOR PARAMETERS (edit here if needed)
@@ -238,7 +238,7 @@ sigBullL := false
 // =========================================================================
 // SWING LOW MMD - evaluates when either asset alternates AND both are synced
 // =========================================================================
-if isValid and syncedL and barstate.isconfirmed
+if isValid and syncedL
     aCurrL = aSL
     aPrevL = apSL
     bCurrL = bSL
@@ -259,12 +259,15 @@ if isValid and syncedL and barstate.isconfirmed
                 externalOK := (aSize == 0 and bSize == 0) or aIsExt or bIsExt
 
             if externalOK
+                prov      = not barstate.isconfirmed
+                sigColor  = prov ? color.new(cBull, 55) : cBull
+                sigStyle  = prov ? line.style_dotted : line.style_solid
                 line ln = na
                 if not na(cpSLbar) and not na(cpSL) and not na(cSLbar) and not na(cSL)
-                    ln := line.new(cpSLbar, cpSL, cSLbar, cSL, color = cBull, width = 2, style = line.style_solid)
+                    ln := line.new(cpSLbar, cpSL, cSLbar, cSL, color = sigColor, width = 2, style = sigStyle)
                 anchorBar   = not na(cSLbar) ? cSLbar : bar_index
                 anchorPrice = not na(cSL)    ? cSL    : low
-                lb = label.new(anchorBar, anchorPrice, 'MMD', color = cBull, style = label.style_label_up, textcolor = color.white, size = size.small)
+                lb = label.new(anchorBar, anchorPrice, 'MMD', color = sigColor, style = label.style_label_up, textcolor = color.white, size = size.small)
                 addSig(ln, lb)
                 lastSigLowAprev := aPrevL
                 lastSigLowBprev := bPrevL
@@ -273,7 +276,7 @@ if isValid and syncedL and barstate.isconfirmed
 // =========================================================================
 // SWING HIGH MMD - evaluates when either asset alternates AND both are synced
 // =========================================================================
-if isValid and syncedH and barstate.isconfirmed
+if isValid and syncedH
     aCurrH = aSH
     aPrevH = apSH
     bCurrH = bSH
@@ -294,12 +297,15 @@ if isValid and syncedH and barstate.isconfirmed
                 externalOK := (aSize == 0 and bSize == 0) or aIsExt or bIsExt
 
             if externalOK
+                prov      = not barstate.isconfirmed
+                sigColor  = prov ? color.new(cBear, 55) : cBear
+                sigStyle  = prov ? line.style_dotted : line.style_solid
                 line ln = na
                 if not na(cpSHbar) and not na(cpSH) and not na(cSHbar) and not na(cSH)
-                    ln := line.new(cpSHbar, cpSH, cSHbar, cSH, color = cBear, width = 2, style = line.style_solid)
+                    ln := line.new(cpSHbar, cpSH, cSHbar, cSH, color = sigColor, width = 2, style = sigStyle)
                 anchorBar   = not na(cSHbar) ? cSHbar : bar_index
                 anchorPrice = not na(cSH)    ? cSH    : high
-                lb = label.new(anchorBar, anchorPrice, 'MMD', color = cBear, style = label.style_label_down, textcolor = color.white, size = size.small)
+                lb = label.new(anchorBar, anchorPrice, 'MMD', color = sigColor, style = label.style_label_down, textcolor = color.white, size = size.small)
                 addSig(ln, lb)
                 lastSigHighAprev := aPrevH
                 lastSigHighBprev := bPrevH
