@@ -295,7 +295,7 @@ if not na(statusLbl)
 if VALID_CTX
     int lblX = bar_index + 12
     if dir == 0
-        statusLbl := label.new(lblX, close, "Idle — waiting for a setup to form.", color=color.new(color.gray, 90), textcolor=color.gray, style=label.style_label_left, size=size.large, textalign=text.align_left)
+        statusLbl := label.new(lblX, close, "Idle — waiting for a setup to form.", color=color.new(color.gray, 0), textcolor=color.new(color.gray, 0), style=label.style_label_left, size=size.large, textalign=text.align_left)
     else
         string dirWord = dir == -1 ? "short" : "long"
         color  dirCol  = dir == -1 ? colShort : colLong
