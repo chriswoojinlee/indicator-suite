@@ -1,5 +1,5 @@
 //@version=6
-indicator(title="VWAP", shorttitle="VWAP", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator(title="VWAP Levels", shorttitle="VWAP Levels", overlay=true, max_lines_count=500, max_labels_count=500)
 
 rawTicker = syminfo.ticker
 baseSymbol = str.replace(str.replace(str.replace(str.replace(str.replace(rawTicker, "USDT", ""), "USDC", ""), "USD", ""), "PERP", ""), ".P", "")
@@ -58,6 +58,16 @@ color_dd_VAL = input.color(color.new(color.white, 85), "", group=D_GROUP, inline
 width_dd_VAL = input.int(1, "", minval=1, maxval=4, group=D_GROUP, inline="dd_val", display=display.none)
 style_dd_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=D_GROUP, inline="dd_val", display=display.none)
 
+show_dd_2SDu = input.bool(false, "developing-2SD+", group=D_GROUP, inline="dd_2sdu", display=display.none)
+color_dd_2SDu = input.color(color.new(color.white, 85), "", group=D_GROUP, inline="dd_2sdu", display=display.none)
+width_dd_2SDu = input.int(1, "", minval=1, maxval=4, group=D_GROUP, inline="dd_2sdu", display=display.none)
+style_dd_2SDu = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=D_GROUP, inline="dd_2sdu", display=display.none)
+
+show_dd_2SDl = input.bool(false, "developing-2SD-", group=D_GROUP, inline="dd_2sdl", display=display.none)
+color_dd_2SDl = input.color(color.new(color.white, 85), "", group=D_GROUP, inline="dd_2sdl", display=display.none)
+width_dd_2SDl = input.int(1, "", minval=1, maxval=4, group=D_GROUP, inline="dd_2sdl", display=display.none)
+style_dd_2SDl = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=D_GROUP, inline="dd_2sdl", display=display.none)
+
 show_pd_VWAP = input.bool(false, "previous-VWAP", group=D_GROUP, inline="pd_vwap", display=display.none)
 color_pd_VWAP = input.color(color.new(color.white, 25), "", group=D_GROUP, inline="pd_vwap", display=display.none)
 width_pd_VWAP = input.int(1, "", minval=1, maxval=4, group=D_GROUP, inline="pd_vwap", display=display.none)
@@ -72,6 +82,16 @@ show_pd_VAL = input.bool(false, "previous-VAL", group=D_GROUP, inline="pd_val", 
 color_pd_VAL = input.color(color.new(color.white, 85), "", group=D_GROUP, inline="pd_val", display=display.none)
 width_pd_VAL = input.int(1, "", minval=1, maxval=4, group=D_GROUP, inline="pd_val", display=display.none)
 style_pd_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=D_GROUP, inline="pd_val", display=display.none)
+
+show_pd_2SDu = input.bool(false, "previous-2SD+", group=D_GROUP, inline="pd_2sdu", display=display.none)
+color_pd_2SDu = input.color(color.new(color.white, 85), "", group=D_GROUP, inline="pd_2sdu", display=display.none)
+width_pd_2SDu = input.int(1, "", minval=1, maxval=4, group=D_GROUP, inline="pd_2sdu", display=display.none)
+style_pd_2SDu = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=D_GROUP, inline="pd_2sdu", display=display.none)
+
+show_pd_2SDl = input.bool(false, "previous-2SD-", group=D_GROUP, inline="pd_2sdl", display=display.none)
+color_pd_2SDl = input.color(color.new(color.white, 85), "", group=D_GROUP, inline="pd_2sdl", display=display.none)
+width_pd_2SDl = input.int(1, "", minval=1, maxval=4, group=D_GROUP, inline="pd_2sdl", display=display.none)
+style_pd_2SDl = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=D_GROUP, inline="pd_2sdl", display=display.none)
 
 // ============================================================================
 // WEEKLY
@@ -92,6 +112,16 @@ color_dw_VAL = input.color(color.new(color.white, 85), "", group=W_GROUP, inline
 width_dw_VAL = input.int(1, "", minval=1, maxval=4, group=W_GROUP, inline="dw_val", display=display.none)
 style_dw_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=W_GROUP, inline="dw_val", display=display.none)
 
+show_dw_2SDu = input.bool(false, "developing-2SD+", group=W_GROUP, inline="dw_2sdu", display=display.none)
+color_dw_2SDu = input.color(color.new(color.white, 85), "", group=W_GROUP, inline="dw_2sdu", display=display.none)
+width_dw_2SDu = input.int(1, "", minval=1, maxval=4, group=W_GROUP, inline="dw_2sdu", display=display.none)
+style_dw_2SDu = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=W_GROUP, inline="dw_2sdu", display=display.none)
+
+show_dw_2SDl = input.bool(false, "developing-2SD-", group=W_GROUP, inline="dw_2sdl", display=display.none)
+color_dw_2SDl = input.color(color.new(color.white, 85), "", group=W_GROUP, inline="dw_2sdl", display=display.none)
+width_dw_2SDl = input.int(1, "", minval=1, maxval=4, group=W_GROUP, inline="dw_2sdl", display=display.none)
+style_dw_2SDl = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=W_GROUP, inline="dw_2sdl", display=display.none)
+
 show_pw_VWAP = input.bool(false, "previous-VWAP", group=W_GROUP, inline="pw_vwap", display=display.none)
 color_pw_VWAP = input.color(color.new(color.white, 25), "", group=W_GROUP, inline="pw_vwap", display=display.none)
 width_pw_VWAP = input.int(1, "", minval=1, maxval=4, group=W_GROUP, inline="pw_vwap", display=display.none)
@@ -106,6 +136,16 @@ show_pw_VAL = input.bool(false, "previous-VAL", group=W_GROUP, inline="pw_val", 
 color_pw_VAL = input.color(color.new(color.white, 85), "", group=W_GROUP, inline="pw_val", display=display.none)
 width_pw_VAL = input.int(1, "", minval=1, maxval=4, group=W_GROUP, inline="pw_val", display=display.none)
 style_pw_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=W_GROUP, inline="pw_val", display=display.none)
+
+show_pw_2SDu = input.bool(false, "previous-2SD+", group=W_GROUP, inline="pw_2sdu", display=display.none)
+color_pw_2SDu = input.color(color.new(color.white, 85), "", group=W_GROUP, inline="pw_2sdu", display=display.none)
+width_pw_2SDu = input.int(1, "", minval=1, maxval=4, group=W_GROUP, inline="pw_2sdu", display=display.none)
+style_pw_2SDu = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=W_GROUP, inline="pw_2sdu", display=display.none)
+
+show_pw_2SDl = input.bool(false, "previous-2SD-", group=W_GROUP, inline="pw_2sdl", display=display.none)
+color_pw_2SDl = input.color(color.new(color.white, 85), "", group=W_GROUP, inline="pw_2sdl", display=display.none)
+width_pw_2SDl = input.int(1, "", minval=1, maxval=4, group=W_GROUP, inline="pw_2sdl", display=display.none)
+style_pw_2SDl = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=W_GROUP, inline="pw_2sdl", display=display.none)
 
 // ============================================================================
 // MONTHLY
@@ -126,6 +166,16 @@ color_dm_VAL = input.color(color.new(color.white, 85), "", group=M_GROUP, inline
 width_dm_VAL = input.int(2, "", minval=1, maxval=4, group=M_GROUP, inline="dm_val", display=display.none)
 style_dm_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=M_GROUP, inline="dm_val", display=display.none)
 
+show_dm_2SDu = input.bool(false, "developing-2SD+", group=M_GROUP, inline="dm_2sdu", display=display.none)
+color_dm_2SDu = input.color(color.new(color.white, 85), "", group=M_GROUP, inline="dm_2sdu", display=display.none)
+width_dm_2SDu = input.int(2, "", minval=1, maxval=4, group=M_GROUP, inline="dm_2sdu", display=display.none)
+style_dm_2SDu = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=M_GROUP, inline="dm_2sdu", display=display.none)
+
+show_dm_2SDl = input.bool(false, "developing-2SD-", group=M_GROUP, inline="dm_2sdl", display=display.none)
+color_dm_2SDl = input.color(color.new(color.white, 85), "", group=M_GROUP, inline="dm_2sdl", display=display.none)
+width_dm_2SDl = input.int(2, "", minval=1, maxval=4, group=M_GROUP, inline="dm_2sdl", display=display.none)
+style_dm_2SDl = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=M_GROUP, inline="dm_2sdl", display=display.none)
+
 show_pm_VWAP = input.bool(false, "previous-VWAP", group=M_GROUP, inline="pm_vwap", display=display.none)
 color_pm_VWAP = input.color(color.new(color.white, 25), "", group=M_GROUP, inline="pm_vwap", display=display.none)
 width_pm_VWAP = input.int(2, "", minval=1, maxval=4, group=M_GROUP, inline="pm_vwap", display=display.none)
@@ -140,6 +190,16 @@ show_pm_VAL = input.bool(false, "previous-VAL", group=M_GROUP, inline="pm_val", 
 color_pm_VAL = input.color(color.new(color.white, 85), "", group=M_GROUP, inline="pm_val", display=display.none)
 width_pm_VAL = input.int(2, "", minval=1, maxval=4, group=M_GROUP, inline="pm_val", display=display.none)
 style_pm_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=M_GROUP, inline="pm_val", display=display.none)
+
+show_pm_2SDu = input.bool(false, "previous-2SD+", group=M_GROUP, inline="pm_2sdu", display=display.none)
+color_pm_2SDu = input.color(color.new(color.white, 85), "", group=M_GROUP, inline="pm_2sdu", display=display.none)
+width_pm_2SDu = input.int(2, "", minval=1, maxval=4, group=M_GROUP, inline="pm_2sdu", display=display.none)
+style_pm_2SDu = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=M_GROUP, inline="pm_2sdu", display=display.none)
+
+show_pm_2SDl = input.bool(false, "previous-2SD-", group=M_GROUP, inline="pm_2sdl", display=display.none)
+color_pm_2SDl = input.color(color.new(color.white, 85), "", group=M_GROUP, inline="pm_2sdl", display=display.none)
+width_pm_2SDl = input.int(2, "", minval=1, maxval=4, group=M_GROUP, inline="pm_2sdl", display=display.none)
+style_pm_2SDl = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=M_GROUP, inline="pm_2sdl", display=display.none)
 
 // ============================================================================
 // QUARTERLY
@@ -160,6 +220,16 @@ color_dq_VAL = input.color(color.new(color.white, 85), "", group=Q_GROUP, inline
 width_dq_VAL = input.int(3, "", minval=1, maxval=4, group=Q_GROUP, inline="dq_val", display=display.none)
 style_dq_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=Q_GROUP, inline="dq_val", display=display.none)
 
+show_dq_2SDu = input.bool(false, "developing-2SD+", group=Q_GROUP, inline="dq_2sdu", display=display.none)
+color_dq_2SDu = input.color(color.new(color.white, 85), "", group=Q_GROUP, inline="dq_2sdu", display=display.none)
+width_dq_2SDu = input.int(3, "", minval=1, maxval=4, group=Q_GROUP, inline="dq_2sdu", display=display.none)
+style_dq_2SDu = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=Q_GROUP, inline="dq_2sdu", display=display.none)
+
+show_dq_2SDl = input.bool(false, "developing-2SD-", group=Q_GROUP, inline="dq_2sdl", display=display.none)
+color_dq_2SDl = input.color(color.new(color.white, 85), "", group=Q_GROUP, inline="dq_2sdl", display=display.none)
+width_dq_2SDl = input.int(3, "", minval=1, maxval=4, group=Q_GROUP, inline="dq_2sdl", display=display.none)
+style_dq_2SDl = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=Q_GROUP, inline="dq_2sdl", display=display.none)
+
 show_pq_VWAP = input.bool(false, "previous-VWAP", group=Q_GROUP, inline="pq_vwap", display=display.none)
 color_pq_VWAP = input.color(color.new(color.white, 25), "", group=Q_GROUP, inline="pq_vwap", display=display.none)
 width_pq_VWAP = input.int(3, "", minval=1, maxval=4, group=Q_GROUP, inline="pq_vwap", display=display.none)
@@ -174,6 +244,16 @@ show_pq_VAL = input.bool(false, "previous-VAL", group=Q_GROUP, inline="pq_val", 
 color_pq_VAL = input.color(color.new(color.white, 85), "", group=Q_GROUP, inline="pq_val", display=display.none)
 width_pq_VAL = input.int(3, "", minval=1, maxval=4, group=Q_GROUP, inline="pq_val", display=display.none)
 style_pq_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=Q_GROUP, inline="pq_val", display=display.none)
+
+show_pq_2SDu = input.bool(false, "previous-2SD+", group=Q_GROUP, inline="pq_2sdu", display=display.none)
+color_pq_2SDu = input.color(color.new(color.white, 85), "", group=Q_GROUP, inline="pq_2sdu", display=display.none)
+width_pq_2SDu = input.int(3, "", minval=1, maxval=4, group=Q_GROUP, inline="pq_2sdu", display=display.none)
+style_pq_2SDu = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=Q_GROUP, inline="pq_2sdu", display=display.none)
+
+show_pq_2SDl = input.bool(false, "previous-2SD-", group=Q_GROUP, inline="pq_2sdl", display=display.none)
+color_pq_2SDl = input.color(color.new(color.white, 85), "", group=Q_GROUP, inline="pq_2sdl", display=display.none)
+width_pq_2SDl = input.int(3, "", minval=1, maxval=4, group=Q_GROUP, inline="pq_2sdl", display=display.none)
+style_pq_2SDl = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=Q_GROUP, inline="pq_2sdl", display=display.none)
 
 // ============================================================================
 // YEARLY
@@ -194,6 +274,16 @@ color_dy_VAL = input.color(color.new(color.white, 85), "", group=Y_GROUP, inline
 width_dy_VAL = input.int(4, "", minval=1, maxval=4, group=Y_GROUP, inline="dy_val", display=display.none)
 style_dy_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=Y_GROUP, inline="dy_val", display=display.none)
 
+show_dy_2SDu = input.bool(false, "developing-2SD+", group=Y_GROUP, inline="dy_2sdu", display=display.none)
+color_dy_2SDu = input.color(color.new(color.white, 85), "", group=Y_GROUP, inline="dy_2sdu", display=display.none)
+width_dy_2SDu = input.int(4, "", minval=1, maxval=4, group=Y_GROUP, inline="dy_2sdu", display=display.none)
+style_dy_2SDu = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=Y_GROUP, inline="dy_2sdu", display=display.none)
+
+show_dy_2SDl = input.bool(false, "developing-2SD-", group=Y_GROUP, inline="dy_2sdl", display=display.none)
+color_dy_2SDl = input.color(color.new(color.white, 85), "", group=Y_GROUP, inline="dy_2sdl", display=display.none)
+width_dy_2SDl = input.int(4, "", minval=1, maxval=4, group=Y_GROUP, inline="dy_2sdl", display=display.none)
+style_dy_2SDl = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=Y_GROUP, inline="dy_2sdl", display=display.none)
+
 show_py_VWAP = input.bool(false, "previous-VWAP", group=Y_GROUP, inline="py_vwap", display=display.none)
 color_py_VWAP = input.color(color.new(color.white, 25), "", group=Y_GROUP, inline="py_vwap", display=display.none)
 width_py_VWAP = input.int(4, "", minval=1, maxval=4, group=Y_GROUP, inline="py_vwap", display=display.none)
@@ -208,6 +298,16 @@ show_py_VAL = input.bool(false, "previous-VAL", group=Y_GROUP, inline="py_val", 
 color_py_VAL = input.color(color.new(color.white, 85), "", group=Y_GROUP, inline="py_val", display=display.none)
 width_py_VAL = input.int(4, "", minval=1, maxval=4, group=Y_GROUP, inline="py_val", display=display.none)
 style_py_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=Y_GROUP, inline="py_val", display=display.none)
+
+show_py_2SDu = input.bool(false, "previous-2SD+", group=Y_GROUP, inline="py_2sdu", display=display.none)
+color_py_2SDu = input.color(color.new(color.white, 85), "", group=Y_GROUP, inline="py_2sdu", display=display.none)
+width_py_2SDu = input.int(4, "", minval=1, maxval=4, group=Y_GROUP, inline="py_2sdu", display=display.none)
+style_py_2SDu = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=Y_GROUP, inline="py_2sdu", display=display.none)
+
+show_py_2SDl = input.bool(false, "previous-2SD-", group=Y_GROUP, inline="py_2sdl", display=display.none)
+color_py_2SDl = input.color(color.new(color.white, 85), "", group=Y_GROUP, inline="py_2sdl", display=display.none)
+width_py_2SDl = input.int(4, "", minval=1, maxval=4, group=Y_GROUP, inline="py_2sdl", display=display.none)
+style_py_2SDl = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=Y_GROUP, inline="py_2sdl", display=display.none)
 
 // ============================================================================
 // DECADE
@@ -228,6 +328,16 @@ color_ddec_VAL = input.color(color.new(color.white, 85), "", group=DEC_GROUP, in
 width_ddec_VAL = input.int(4, "", minval=1, maxval=4, group=DEC_GROUP, inline="ddec_val", display=display.none)
 style_ddec_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DEC_GROUP, inline="ddec_val", display=display.none)
 
+show_ddec_2SDu = input.bool(false, "developing-2SD+", group=DEC_GROUP, inline="ddec_2sdu", display=display.none)
+color_ddec_2SDu = input.color(color.new(color.white, 85), "", group=DEC_GROUP, inline="ddec_2sdu", display=display.none)
+width_ddec_2SDu = input.int(4, "", minval=1, maxval=4, group=DEC_GROUP, inline="ddec_2sdu", display=display.none)
+style_ddec_2SDu = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DEC_GROUP, inline="ddec_2sdu", display=display.none)
+
+show_ddec_2SDl = input.bool(false, "developing-2SD-", group=DEC_GROUP, inline="ddec_2sdl", display=display.none)
+color_ddec_2SDl = input.color(color.new(color.white, 85), "", group=DEC_GROUP, inline="ddec_2sdl", display=display.none)
+width_ddec_2SDl = input.int(4, "", minval=1, maxval=4, group=DEC_GROUP, inline="ddec_2sdl", display=display.none)
+style_ddec_2SDl = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DEC_GROUP, inline="ddec_2sdl", display=display.none)
+
 show_pdec_VWAP = input.bool(false, "previous-VWAP", group=DEC_GROUP, inline="pdec_vwap", display=display.none)
 color_pdec_VWAP = input.color(color.new(color.white, 25), "", group=DEC_GROUP, inline="pdec_vwap", display=display.none)
 width_pdec_VWAP = input.int(4, "", minval=1, maxval=4, group=DEC_GROUP, inline="pdec_vwap", display=display.none)
@@ -242,6 +352,16 @@ show_pdec_VAL = input.bool(false, "previous-VAL", group=DEC_GROUP, inline="pdec_
 color_pdec_VAL = input.color(color.new(color.white, 85), "", group=DEC_GROUP, inline="pdec_val", display=display.none)
 width_pdec_VAL = input.int(4, "", minval=1, maxval=4, group=DEC_GROUP, inline="pdec_val", display=display.none)
 style_pdec_VAL = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DEC_GROUP, inline="pdec_val", display=display.none)
+
+show_pdec_2SDu = input.bool(false, "previous-2SD+", group=DEC_GROUP, inline="pdec_2sdu", display=display.none)
+color_pdec_2SDu = input.color(color.new(color.white, 85), "", group=DEC_GROUP, inline="pdec_2sdu", display=display.none)
+width_pdec_2SDu = input.int(4, "", minval=1, maxval=4, group=DEC_GROUP, inline="pdec_2sdu", display=display.none)
+style_pdec_2SDu = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DEC_GROUP, inline="pdec_2sdu", display=display.none)
+
+show_pdec_2SDl = input.bool(false, "previous-2SD-", group=DEC_GROUP, inline="pdec_2sdl", display=display.none)
+color_pdec_2SDl = input.color(color.new(color.white, 85), "", group=DEC_GROUP, inline="pdec_2sdl", display=display.none)
+width_pdec_2SDl = input.int(4, "", minval=1, maxval=4, group=DEC_GROUP, inline="pdec_2sdl", display=display.none)
+style_pdec_2SDl = input.string("Solid", "", options=["Solid", "Dashed", "Dotted"], group=DEC_GROUP, inline="pdec_2sdl", display=display.none)
 
 // ============================================================================
 // HELPER FUNCTION - STYLE CONVERTER
@@ -273,81 +393,111 @@ if na(combinedPrice[1])
 // ============================================================================
 // VWAP CALCULATIONS (Standard Deviation mode hardcoded)
 // ============================================================================
+// Daily
+[dVwap, dStdevUpper, _d] = ta.vwap(combinedPrice, isNewDay, 1)
+dBandBasis = (dStdevUpper - dVwap) * bandMult
+dVAH = dVwap + dBandBasis
+dVAL = dVwap - dBandBasis
+d2U = dVwap + 2 * dBandBasis
+d2L = dVwap - 2 * dBandBasis
+
 // Weekly
 [wVwap, wStdevUpper, _w] = ta.vwap(combinedPrice, isNewWeek, 1)
 wBandBasis = (wStdevUpper - wVwap) * bandMult
 wVAH = wVwap + wBandBasis
 wVAL = wVwap - wBandBasis
+w2U = wVwap + 2 * wBandBasis
+w2L = wVwap - 2 * wBandBasis
 
 // Monthly
 [mVwap, mStdevUpper, _m] = ta.vwap(combinedPrice, isNewMonth, 1)
 mBandBasis = (mStdevUpper - mVwap) * bandMult
 mVAH = mVwap + mBandBasis
 mVAL = mVwap - mBandBasis
+m2U = mVwap + 2 * mBandBasis
+m2L = mVwap - 2 * mBandBasis
 
 // Quarterly
 [qVwap, qStdevUpper, _q] = ta.vwap(combinedPrice, isNewQuarter, 1)
 qBandBasis = (qStdevUpper - qVwap) * bandMult
 qVAH = qVwap + qBandBasis
 qVAL = qVwap - qBandBasis
+q2U = qVwap + 2 * qBandBasis
+q2L = qVwap - 2 * qBandBasis
 
 // Yearly
 [yVwap, yStdevUpper, _y] = ta.vwap(combinedPrice, isNewYear, 1)
 yBandBasis = (yStdevUpper - yVwap) * bandMult
 yVAH = yVwap + yBandBasis
 yVAL = yVwap - yBandBasis
-
-// Daily
-[dVwap, dStdevUpper, _d] = ta.vwap(combinedPrice, isNewDay, 1)
-dBandBasis = (dStdevUpper - dVwap) * bandMult
-dVAH = dVwap + dBandBasis
-dVAL = dVwap - dBandBasis
+y2U = yVwap + 2 * yBandBasis
+y2L = yVwap - 2 * yBandBasis
 
 // Decade
 [decVwap, decStdevUpper, _dec] = ta.vwap(combinedPrice, isNewDecade, 1)
 decBandBasis = (decStdevUpper - decVwap) * bandMult
 decVAH = decVwap + decBandBasis
 decVAL = decVwap - decBandBasis
+dec2U = decVwap + 2 * decBandBasis
+dec2L = decVwap - 2 * decBandBasis
 
 // ============================================================================
 // STORE PREVIOUS PERIOD VALUES
 // ============================================================================
-var float pw_VWAP = na, var float pw_VAH = na, var float pw_VAL = na
-var float pm_VWAP = na, var float pm_VAH = na, var float pm_VAL = na
-var float pq_VWAP = na, var float pq_VAH = na, var float pq_VAL = na
-var float py_VWAP = na, var float py_VAH = na, var float py_VAL = na
 var float pd_VWAP = na, var float pd_VAH = na, var float pd_VAL = na
+var float pd_2U = na, var float pd_2L = na
+var float pw_VWAP = na, var float pw_VAH = na, var float pw_VAL = na
+var float pw_2U = na, var float pw_2L = na
+var float pm_VWAP = na, var float pm_VAH = na, var float pm_VAL = na
+var float pm_2U = na, var float pm_2L = na
+var float pq_VWAP = na, var float pq_VAH = na, var float pq_VAL = na
+var float pq_2U = na, var float pq_2L = na
+var float py_VWAP = na, var float py_VAH = na, var float py_VAL = na
+var float py_2U = na, var float py_2L = na
 var float pdec_VWAP = na, var float pdec_VAH = na, var float pdec_VAL = na
-
-if isNewWeek and not na(wVwap[1])
-    pw_VWAP := wVwap[1]
-    pw_VAH := wVAH[1]
-    pw_VAL := wVAL[1]
-
-if isNewMonth and not na(mVwap[1])
-    pm_VWAP := mVwap[1]
-    pm_VAH := mVAH[1]
-    pm_VAL := mVAL[1]
-
-if isNewQuarter and not na(qVwap[1])
-    pq_VWAP := qVwap[1]
-    pq_VAH := qVAH[1]
-    pq_VAL := qVAL[1]
-
-if isNewYear and not na(yVwap[1])
-    py_VWAP := yVwap[1]
-    py_VAH := yVAH[1]
-    py_VAL := yVAL[1]
+var float pdec_2U = na, var float pdec_2L = na
 
 if isNewDay and not na(dVwap[1])
     pd_VWAP := dVwap[1]
     pd_VAH := dVAH[1]
     pd_VAL := dVAL[1]
+    pd_2U := d2U[1]
+    pd_2L := d2L[1]
+
+if isNewWeek and not na(wVwap[1])
+    pw_VWAP := wVwap[1]
+    pw_VAH := wVAH[1]
+    pw_VAL := wVAL[1]
+    pw_2U := w2U[1]
+    pw_2L := w2L[1]
+
+if isNewMonth and not na(mVwap[1])
+    pm_VWAP := mVwap[1]
+    pm_VAH := mVAH[1]
+    pm_VAL := mVAL[1]
+    pm_2U := m2U[1]
+    pm_2L := m2L[1]
+
+if isNewQuarter and not na(qVwap[1])
+    pq_VWAP := qVwap[1]
+    pq_VAH := qVAH[1]
+    pq_VAL := qVAL[1]
+    pq_2U := q2U[1]
+    pq_2L := q2L[1]
+
+if isNewYear and not na(yVwap[1])
+    py_VWAP := yVwap[1]
+    py_VAH := yVAH[1]
+    py_VAL := yVAL[1]
+    py_2U := y2U[1]
+    py_2L := y2L[1]
 
 if isNewDecade and not na(decVwap[1])
     pdec_VWAP := decVwap[1]
     pdec_VAH := decVAH[1]
     pdec_VAL := decVAL[1]
+    pdec_2U := dec2U[1]
+    pdec_2L := dec2L[1]
 
 // ============================================================================
 // PERSISTENT STORAGE FOR DRAWINGS
@@ -388,13 +538,20 @@ if barstate.islast
     var levels = array.new<LevelData>()
     array.clear(levels)
     
-// Decade Developing
+    // Priority: ddec=10, pdec=9, dy=8, py=7, dq=6, pq=5, dm=4, pm=3, dw=2, pw=1, dd=0, pd=-1
+    // 2SD levels carry their period's priority (timeframe dominance, not band distance)
+    
+    // Decade Developing
     if show_ddec_VWAP and not na(decVwap)
         array.push(levels, LevelData.new(decVwap, "ddec-VWAP", 10, color_ddec_VWAP, width_ddec_VWAP, style_ddec_VWAP, false))
     if show_ddec_VAH and not na(decVAH)
         array.push(levels, LevelData.new(decVAH, "ddec-VAH", 10, color_ddec_VAH, width_ddec_VAH, style_ddec_VAH, false))
     if show_ddec_VAL and not na(decVAL)
         array.push(levels, LevelData.new(decVAL, "ddec-VAL", 10, color_ddec_VAL, width_ddec_VAL, style_ddec_VAL, false))
+    if show_ddec_2SDu and not na(dec2U)
+        array.push(levels, LevelData.new(dec2U, "ddec-2SD+", 10, color_ddec_2SDu, width_ddec_2SDu, style_ddec_2SDu, false))
+    if show_ddec_2SDl and not na(dec2L)
+        array.push(levels, LevelData.new(dec2L, "ddec-2SD-", 10, color_ddec_2SDl, width_ddec_2SDl, style_ddec_2SDl, false))
     
     // Decade Previous
     if show_pdec_VWAP and not na(pdec_VWAP)
@@ -403,8 +560,11 @@ if barstate.islast
         array.push(levels, LevelData.new(pdec_VAH, "pdec-VAH", 9, color_pdec_VAH, width_pdec_VAH, style_pdec_VAH, false))
     if show_pdec_VAL and not na(pdec_VAL)
         array.push(levels, LevelData.new(pdec_VAL, "pdec-VAL", 9, color_pdec_VAL, width_pdec_VAL, style_pdec_VAL, false))
-
-    // Add all enabled levels (priority: dy=8, py=7, dq=6, pq=5, dm=4, pm=3, dw=2, pw=1)
+    if show_pdec_2SDu and not na(pdec_2U)
+        array.push(levels, LevelData.new(pdec_2U, "pdec-2SD+", 9, color_pdec_2SDu, width_pdec_2SDu, style_pdec_2SDu, false))
+    if show_pdec_2SDl and not na(pdec_2L)
+        array.push(levels, LevelData.new(pdec_2L, "pdec-2SD-", 9, color_pdec_2SDl, width_pdec_2SDl, style_pdec_2SDl, false))
+    
     // Yearly Developing
     if show_dy_VWAP and not na(yVwap)
         array.push(levels, LevelData.new(yVwap, "dy-VWAP", 8, color_dy_VWAP, width_dy_VWAP, style_dy_VWAP, false))
@@ -412,6 +572,10 @@ if barstate.islast
         array.push(levels, LevelData.new(yVAH, "dy-VAH", 8, color_dy_VAH, width_dy_VAH, style_dy_VAH, false))
     if show_dy_VAL and not na(yVAL)
         array.push(levels, LevelData.new(yVAL, "dy-VAL", 8, color_dy_VAL, width_dy_VAL, style_dy_VAL, false))
+    if show_dy_2SDu and not na(y2U)
+        array.push(levels, LevelData.new(y2U, "dy-2SD+", 8, color_dy_2SDu, width_dy_2SDu, style_dy_2SDu, false))
+    if show_dy_2SDl and not na(y2L)
+        array.push(levels, LevelData.new(y2L, "dy-2SD-", 8, color_dy_2SDl, width_dy_2SDl, style_dy_2SDl, false))
     
     // Yearly Previous
     if show_py_VWAP and not na(py_VWAP)
@@ -420,6 +584,10 @@ if barstate.islast
         array.push(levels, LevelData.new(py_VAH, "py-VAH", 7, color_py_VAH, width_py_VAH, style_py_VAH, false))
     if show_py_VAL and not na(py_VAL)
         array.push(levels, LevelData.new(py_VAL, "py-VAL", 7, color_py_VAL, width_py_VAL, style_py_VAL, false))
+    if show_py_2SDu and not na(py_2U)
+        array.push(levels, LevelData.new(py_2U, "py-2SD+", 7, color_py_2SDu, width_py_2SDu, style_py_2SDu, false))
+    if show_py_2SDl and not na(py_2L)
+        array.push(levels, LevelData.new(py_2L, "py-2SD-", 7, color_py_2SDl, width_py_2SDl, style_py_2SDl, false))
     
     // Quarterly Developing
     if show_dq_VWAP and not na(qVwap)
@@ -428,6 +596,10 @@ if barstate.islast
         array.push(levels, LevelData.new(qVAH, "dq-VAH", 6, color_dq_VAH, width_dq_VAH, style_dq_VAH, false))
     if show_dq_VAL and not na(qVAL)
         array.push(levels, LevelData.new(qVAL, "dq-VAL", 6, color_dq_VAL, width_dq_VAL, style_dq_VAL, false))
+    if show_dq_2SDu and not na(q2U)
+        array.push(levels, LevelData.new(q2U, "dq-2SD+", 6, color_dq_2SDu, width_dq_2SDu, style_dq_2SDu, false))
+    if show_dq_2SDl and not na(q2L)
+        array.push(levels, LevelData.new(q2L, "dq-2SD-", 6, color_dq_2SDl, width_dq_2SDl, style_dq_2SDl, false))
     
     // Quarterly Previous
     if show_pq_VWAP and not na(pq_VWAP)
@@ -436,6 +608,10 @@ if barstate.islast
         array.push(levels, LevelData.new(pq_VAH, "pq-VAH", 5, color_pq_VAH, width_pq_VAH, style_pq_VAH, false))
     if show_pq_VAL and not na(pq_VAL)
         array.push(levels, LevelData.new(pq_VAL, "pq-VAL", 5, color_pq_VAL, width_pq_VAL, style_pq_VAL, false))
+    if show_pq_2SDu and not na(pq_2U)
+        array.push(levels, LevelData.new(pq_2U, "pq-2SD+", 5, color_pq_2SDu, width_pq_2SDu, style_pq_2SDu, false))
+    if show_pq_2SDl and not na(pq_2L)
+        array.push(levels, LevelData.new(pq_2L, "pq-2SD-", 5, color_pq_2SDl, width_pq_2SDl, style_pq_2SDl, false))
     
     // Monthly Developing
     if show_dm_VWAP and not na(mVwap)
@@ -444,6 +620,10 @@ if barstate.islast
         array.push(levels, LevelData.new(mVAH, "dm-VAH", 4, color_dm_VAH, width_dm_VAH, style_dm_VAH, false))
     if show_dm_VAL and not na(mVAL)
         array.push(levels, LevelData.new(mVAL, "dm-VAL", 4, color_dm_VAL, width_dm_VAL, style_dm_VAL, false))
+    if show_dm_2SDu and not na(m2U)
+        array.push(levels, LevelData.new(m2U, "dm-2SD+", 4, color_dm_2SDu, width_dm_2SDu, style_dm_2SDu, false))
+    if show_dm_2SDl and not na(m2L)
+        array.push(levels, LevelData.new(m2L, "dm-2SD-", 4, color_dm_2SDl, width_dm_2SDl, style_dm_2SDl, false))
     
     // Monthly Previous
     if show_pm_VWAP and not na(pm_VWAP)
@@ -452,6 +632,10 @@ if barstate.islast
         array.push(levels, LevelData.new(pm_VAH, "pm-VAH", 3, color_pm_VAH, width_pm_VAH, style_pm_VAH, false))
     if show_pm_VAL and not na(pm_VAL)
         array.push(levels, LevelData.new(pm_VAL, "pm-VAL", 3, color_pm_VAL, width_pm_VAL, style_pm_VAL, false))
+    if show_pm_2SDu and not na(pm_2U)
+        array.push(levels, LevelData.new(pm_2U, "pm-2SD+", 3, color_pm_2SDu, width_pm_2SDu, style_pm_2SDu, false))
+    if show_pm_2SDl and not na(pm_2L)
+        array.push(levels, LevelData.new(pm_2L, "pm-2SD-", 3, color_pm_2SDl, width_pm_2SDl, style_pm_2SDl, false))
     
     // Weekly Developing
     if show_dw_VWAP and not na(wVwap)
@@ -460,6 +644,10 @@ if barstate.islast
         array.push(levels, LevelData.new(wVAH, "dw-VAH", 2, color_dw_VAH, width_dw_VAH, style_dw_VAH, false))
     if show_dw_VAL and not na(wVAL)
         array.push(levels, LevelData.new(wVAL, "dw-VAL", 2, color_dw_VAL, width_dw_VAL, style_dw_VAL, false))
+    if show_dw_2SDu and not na(w2U)
+        array.push(levels, LevelData.new(w2U, "dw-2SD+", 2, color_dw_2SDu, width_dw_2SDu, style_dw_2SDu, false))
+    if show_dw_2SDl and not na(w2L)
+        array.push(levels, LevelData.new(w2L, "dw-2SD-", 2, color_dw_2SDl, width_dw_2SDl, style_dw_2SDl, false))
     
     // Weekly Previous
     if show_pw_VWAP and not na(pw_VWAP)
@@ -468,14 +656,22 @@ if barstate.islast
         array.push(levels, LevelData.new(pw_VAH, "pw-VAH", 1, color_pw_VAH, width_pw_VAH, style_pw_VAH, false))
     if show_pw_VAL and not na(pw_VAL)
         array.push(levels, LevelData.new(pw_VAL, "pw-VAL", 1, color_pw_VAL, width_pw_VAL, style_pw_VAL, false))
+    if show_pw_2SDu and not na(pw_2U)
+        array.push(levels, LevelData.new(pw_2U, "pw-2SD+", 1, color_pw_2SDu, width_pw_2SDu, style_pw_2SDu, false))
+    if show_pw_2SDl and not na(pw_2L)
+        array.push(levels, LevelData.new(pw_2L, "pw-2SD-", 1, color_pw_2SDl, width_pw_2SDl, style_pw_2SDl, false))
     
-// Daily Developing
+    // Daily Developing
     if show_dd_VWAP and not na(dVwap)
         array.push(levels, LevelData.new(dVwap, "dd-VWAP", 0, color_dd_VWAP, width_dd_VWAP, style_dd_VWAP, false))
     if show_dd_VAH and not na(dVAH)
         array.push(levels, LevelData.new(dVAH, "dd-VAH", 0, color_dd_VAH, width_dd_VAH, style_dd_VAH, false))
     if show_dd_VAL and not na(dVAL)
         array.push(levels, LevelData.new(dVAL, "dd-VAL", 0, color_dd_VAL, width_dd_VAL, style_dd_VAL, false))
+    if show_dd_2SDu and not na(d2U)
+        array.push(levels, LevelData.new(d2U, "dd-2SD+", 0, color_dd_2SDu, width_dd_2SDu, style_dd_2SDu, false))
+    if show_dd_2SDl and not na(d2L)
+        array.push(levels, LevelData.new(d2L, "dd-2SD-", 0, color_dd_2SDl, width_dd_2SDl, style_dd_2SDl, false))
     
     // Daily Previous
     if show_pd_VWAP and not na(pd_VWAP)
@@ -484,7 +680,11 @@ if barstate.islast
         array.push(levels, LevelData.new(pd_VAH, "pd-VAH", -1, color_pd_VAH, width_pd_VAH, style_pd_VAH, false))
     if show_pd_VAL and not na(pd_VAL)
         array.push(levels, LevelData.new(pd_VAL, "pd-VAL", -1, color_pd_VAL, width_pd_VAL, style_pd_VAL, false))
-
+    if show_pd_2SDu and not na(pd_2U)
+        array.push(levels, LevelData.new(pd_2U, "pd-2SD+", -1, color_pd_2SDu, width_pd_2SDu, style_pd_2SDu, false))
+    if show_pd_2SDl and not na(pd_2L)
+        array.push(levels, LevelData.new(pd_2L, "pd-2SD-", -1, color_pd_2SDl, width_pd_2SDl, style_pd_2SDl, false))
+    
     // Process levels and find confluences
     int numLevels = array.size(levels)
     float thresholdPct = confluenceThreshold / 100.0
