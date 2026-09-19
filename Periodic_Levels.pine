@@ -4,92 +4,104 @@
 //@version=6
 indicator("Periodic Levels", overlay=true, max_lines_count=500, max_labels_count=500)
 
-// 1. WEEKEND EXTREME: weekend high/low exceeding all 4 prior weekdays (cmeC phase)
-//    - Emitted as a LIVE PREVIEW during the weekend, anchored to the wick that set wH/wL
-//    - Updates as wH/wL grow during the cmeC phase
-//    - Frozen during the brief weekend-with-CME-open window (Sun 5–7PM CT)
-//    - Sweep detection works on the live preview
-//    - Promoted to a permanent level on weekend exit if still valid and unswept
-// 2. CME GAP FILL: gap between Friday 4PM CT close and Sunday 5PM CT open
-//    - Fill detected at 1H to avoid HTF same-bar ambiguity
-//    - Line anchors to the LAST in-session chart bar (cmeCloseBarIdx = bar_index - 1
-//      at the transition).
-// 3. WEEKLY OPEN: open price 2 hours after CME open (Sunday 19:00 CT =
-//    start of Monday's UTC daily candle in CDT). Short-term magnet
-//    level for the trading week.
-//    - Detected at 1H: the bar opening at Sun 19:00 CT carries the
-//      weekly open price.
-//    - Persists from emission until Friday 16:00 CT CME close. NOT
-//      removed on sweep — a weekly open is repeatedly tagged through
-//      the week and remains relevant regardless of sweep status
-//      (magnet, not liquidity stop or fill target).
-//    - Anchor: at emission, compute offset from time difference and
-//      land wkOpenBarIdx on the chart bar whose span contains
-//      h1WkOpenT. Works uniformly across TFs (handles aligned 1H/1D
-//      where security emission == anchor bar, and sub-1H where the
-//      security delivers the value some number of bars late).
-//    - Label position is dynamic: appears above the line when price
-//      is below, below the line when price is above.
+// ─────────────────────────────────────────────────────────────
+// 1. WEEKEND EXTREME
+//    Weekend high/low that exceeds all 4 prior weekday extremes during
+//    the cmeC phase.
 //
-// All lines drawn with xloc.bar_index (capped at bar_index - 9999 to satisfy
-// Pine's lookback limit on LTF charts where the level is many bars old).
+//    TWO FEEDS, TWO JOBS:
+//      - CME (BTC1!) decides WHETHER a level exists (qualification vs the
+//        4 prior weekdays) and WHETHER it has been swept. CME is the
+//        institutional venue: a level taken out there is consumed
+//        liquidity even if the perp frontran it and never printed through.
+//      - The CHART SYMBOL supplies the PRICE and WICK the line is drawn
+//        at. CME front-month carries basis over a perp (often hundreds of
+//        dollars on BTC), so drawing the CME price on a perp chart leaves
+//        the line floating off the visible wick.
+//
+//    Net effect: the line sits on your chart's own wick, but it only
+//    disappears when CME sweeps it.
+//
+//    - Emitted as a LIVE PREVIEW during the weekend, updating as the
+//      extreme extends through the cmeC phase
+//    - Promoted to a permanent level on weekend exit if unswept
+//    - Catch-up path emits on LTF charts whose history predates the weekend
+//
+// 2. PERIOD OPENS (daily / weekly / monthly / quarterly / yearly)
+//    Institutional reference points. Detected at 1H, anchored to the chart
+//    bar whose span contains the boundary moment.
+//    - Weekly open = Sunday 19:00 CT (start of Monday's UTC daily candle
+//      in CDT); persists until Friday 16:00 CT
+//    - Coincident opens merge: only the most significant level draws, and
+//      the absorbed tags append to its label (e.g. "qO/mO")
+//
+// All lines use xloc.bar_index, clamped to bar_index - 9999 to stay inside
+// Pine's lookback window on LTF charts where a level is many bars old.
+// ─────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────
 // INPUTS
 // ─────────────────────────────────────────────────────────────
 
 string GRP_EXT   = "Weekend Extremes"
-string GRP_GAP   = "CME Gap Fill"
-string GRP_WK    = "Weekly Open"
 string GRP_DAILY = "Daily Open"
+string GRP_WK    = "Weekly Open"
 string GRP_MONTH = "Monthly Open"
-string GRP_QY    = "Quarterly / Yearly"
+string GRP_QTR   = "Quarterly Open"
+string GRP_YEAR  = "Yearly Open"
 string GRP_ALERT = "Alerts"
 
-highColor  = input.color(color.new(color.red,    25), "High Color",           group=GRP_EXT,  display=display.none)
-lowColor   = input.color(color.new(color.green,  25), "Low Color",            group=GRP_EXT,  display=display.none)
-lineWidth  = input.int(1,  "Line Width",  minval=1, maxval=4,                 group=GRP_EXT,  display=display.none)
+// ── Weekend Extremes ──
+showExt    = input.bool(true, "Show Weekend Extremes", group=GRP_EXT, display=display.none)
+highColor  = input.color(color.new(color.red,   50), "High Color", group=GRP_EXT, display=display.none)
+lowColor   = input.color(color.new(color.green, 50), "Low Color",  group=GRP_EXT, display=display.none)
+lineWidth  = input.int(1, "Line Width", minval=1, maxval=4, group=GRP_EXT, display=display.none)
 lineStyle  = input.string("Dotted", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_EXT, display=display.none)
-showLabels = input.bool(true, "Show Labels",                                   group=GRP_EXT,  display=display.none)
+showLabels = input.bool(true, "Show Labels", group=GRP_EXT, display=display.none)
+extSource  = input.string("CME", "Validation Source", options=["CME","Chart Symbol"], group=GRP_EXT, display=display.none,
+             tooltip="Which venue decides whether a level qualifies and whether it has been swept. The line is always DRAWN at the chart symbol's own price so it sits on the visible wick.")
+cmeSymbol  = input.symbol("CME:BTC1!", "CME Reference", group=GRP_EXT, display=display.none)
+showSrcTag = input.bool(true, "Tag Validation Source", group=GRP_EXT, display=display.none,
+             tooltip="Appends (CME) to the label when sweep validity is judged on a different venue than the chart.")
 
-showGap    = input.bool(true,  "Show CME Gap Levels",                         group=GRP_GAP,  display=display.none)
-gapColor   = input.color(color.new(color.yellow, 25), "Gap Color",            group=GRP_GAP,  display=display.none)
-gapWidth   = input.int(1,  "Gap Line Width", minval=1, maxval=4,              group=GRP_GAP,  display=display.none)
-gapStyle   = input.string("Dotted", "Gap Line Style", options=["Solid","Dashed","Dotted"], group=GRP_GAP, display=display.none)
-minGapPct  = input.float(0.5, "Min Gap %", minval=0.0, step=0.1,             group=GRP_GAP,  display=display.none)
+// ── Daily Open ──
+showDailyOpen = input.bool(false, "Show Daily Open", group=GRP_DAILY, display=display.none)
+dailyColor    = input.color(color.new(color.white, 50), "Color", group=GRP_DAILY, display=display.none)
+dailyWidth    = input.int(1, "Line Width", minval=1, maxval=4, group=GRP_DAILY, display=display.none)
+dOpenStyle    = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_DAILY, display=display.none)
 
-showWkOpen      = input.bool(true, "Show Weekly Open Line", group=GRP_WK, display=display.none)
-wkOpenColor     = input.color(color.new(color.white, 50), "Color",            group=GRP_WK, display=display.none)
-wkOpenLineWidth = input.int(1, "Line Width", minval=1, maxval=4,              group=GRP_WK, display=display.none)
+// ── Weekly Open ──
+showWkOpen      = input.bool(true, "Show Weekly Open", group=GRP_WK, display=display.none)
+wkOpenColor     = input.color(color.new(color.white, 50), "Color", group=GRP_WK, display=display.none)
+wkOpenLineWidth = input.int(1, "Line Width", minval=1, maxval=4, group=GRP_WK, display=display.none)
 wkOpenStyle     = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_WK, display=display.none)
 
-showDailyOpen   = input.bool(false, "Show Daily Open",  group=GRP_DAILY, display=display.none)
-dailyColor      = input.color(color.new(color.silver, 60), "Color",      group=GRP_DAILY, display=display.none)
-dailyWidth      = input.int(1, "Line Width", minval=1, maxval=4,         group=GRP_DAILY, display=display.none)
-dOpenStyle      = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_DAILY, display=display.none)
+// ── Monthly Open ──
+showMonthOpen = input.bool(true, "Show Monthly Open", group=GRP_MONTH, display=display.none)
+monthColor    = input.color(color.new(color.white, 50), "Color", group=GRP_MONTH, display=display.none)
+monthWidth    = input.int(1, "Line Width", minval=1, maxval=4, group=GRP_MONTH, display=display.none)
+mOpenStyle    = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_MONTH, display=display.none)
 
-showMonthOpen   = input.bool(true, "Show Monthly Open",  group=GRP_MONTH, display=display.none)
-monthColor      = input.color(color.new(color.orange, 50), "Color",      group=GRP_MONTH, display=display.none)
-monthWidth      = input.int(1, "Line Width", minval=1, maxval=4,         group=GRP_MONTH, display=display.none)
-mOpenStyle      = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_MONTH, display=display.none)
+// ── Quarterly Open ──
+showQtrOpen = input.bool(false, "Show Quarterly Open", group=GRP_QTR, display=display.none)
+qtrColor    = input.color(color.new(color.white, 50), "Color", group=GRP_QTR, display=display.none)
+qtrWidth    = input.int(1, "Line Width", minval=1, maxval=4, group=GRP_QTR, display=display.none)
+qOpenStyle  = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_QTR, display=display.none)
 
-showQtrOpen     = input.bool(false, "Show Quarterly Open",  group=GRP_QY, display=display.none)
-qtrColor        = input.color(color.new(color.teal, 50), "Quarterly Color", group=GRP_QY, display=display.none)
-qOpenStyle      = input.string("Solid", "Q Line Style", options=["Solid","Dashed","Dotted"], group=GRP_QY, display=display.none)
-showYearOpen    = input.bool(false, "Show Yearly Open",  group=GRP_QY, display=display.none)
-yearColor       = input.color(color.new(#FFD700, 50), "Yearly Color",    group=GRP_QY, display=display.none)
-yOpenStyle      = input.string("Solid", "Y Line Style", options=["Solid","Dashed","Dotted"], group=GRP_QY, display=display.none)
-qyWidth         = input.int(1, "Line Width", minval=1, maxval=4,        group=GRP_QY, display=display.none)
+// ── Yearly Open ──
+showYearOpen = input.bool(false, "Show Yearly Open", group=GRP_YEAR, display=display.none)
+yearColor    = input.color(color.new(color.white, 50), "Color", group=GRP_YEAR, display=display.none)
+yearWidth    = input.int(1, "Line Width", minval=1, maxval=4, group=GRP_YEAR, display=display.none)
+yOpenStyle   = input.string("Solid", "Line Style", options=["Solid","Dashed","Dotted"], group=GRP_YEAR, display=display.none)
 
-alertOnSweep   = input.bool(true, "Alert On Sweep",    group=GRP_ALERT, display=display.none)
-alertOnGapFill = input.bool(true, "Alert On Gap Fill", group=GRP_ALERT, display=display.none)
+// ── Alerts ──
+alertOnSweep = input.bool(true, "Alert On Sweep", group=GRP_ALERT, display=display.none)
 
 // ─────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────
 
 int maxExtLevels = 5
-int maxGapLevels = 10
 int extStaleMs   = 5 * 86400000
 int biLookback   = 9999
 
@@ -109,8 +121,16 @@ getLineStyle(string s) =>
 f_safeBI(int storedBI) =>
     math.max(storedBI, bar_index - biLookback)
 
-// Draw (or clear) a single period reference level. Returns new line/label
-// so the caller can reassign its var state. Opens use solid, closes dashed.
+// Compute an anchor bar_index from a 1H boundary timestamp. Lands on the
+// chart bar whose span contains that moment, on any chart timeframe,
+// regardless of how many bars late the security delivers the value.
+f_anchorBI(int ancT) =>
+    int bms = timeframe.in_seconds(timeframe.period) * 1000
+    float r = bms > 0 ? (time - ancT) / float(bms) : 0.0
+    math.max(0, bar_index - math.max(0, int(math.ceil(r))))
+
+// Draw (or clear) a single period reference level. Returns the new
+// line/label so the caller can reassign its var state.
 f_drawPeriodLevel(line oldLn, label oldLb, bool show, float p, int bi,
                   color col, int w, string lstyle, string txt) =>
     line.delete(oldLn)
@@ -130,79 +150,27 @@ f_drawPeriodLevel(line oldLn, label oldLb, bool show, float p, int bi,
     [newLn, newLb]
 
 // ─────────────────────────────────────────────────────────────
-// CHART-SIDE SESSION TRANSITION TRACKING
+// CHART-SIDE SESSION TRACKING
 //
-// cmeCloseBarIdx anchors the CME gap line to the last in-session chart
-// bar before the Friday close. fridayCloseFired distinguishes the
-// Friday CME close from daily maintenance breaks Mon–Thu (used to
-// remove the weekly open line).
-//
-// No chart-side anchor is tracked for the weekly open. Reason: on 1D+
-// in CDT, every chart bar has chartHr=19 (since 00:00 UTC = 19:00 CT
-// prev day), so a chartPostWklyOpen=(dow==1 and hr>=19) or dow>=2
-// transition tracker stays TRUE forever and never fires the false→true
-// transition. The weekly open line is anchored directly to bar_index
-// at emission — that bar already contains the weekly open moment
-// (Monday's 1D bar on 1D, Sun 19:00 CT 1H bar on 1H, etc.).
+// fridayCloseFired marks the Friday 16:00 CT CME close, distinguishing it
+// from the daily maintenance breaks Mon–Thu (which also flip chartInS but
+// land on a different day of week). Used to retire the weekly open.
 // ─────────────────────────────────────────────────────────────
 
-int  chartDow  = dayofweek(time, "America/Chicago")
-int  chartHr   = hour(time,      "America/Chicago")
-bool chartInS  = not ((chartDow == 6 and chartHr >= 16) or chartDow == 7 or (chartDow == 1 and chartHr < 17))
+int  chartDow = dayofweek(time, "America/Chicago")
+int  chartHr  = hour(time,      "America/Chicago")
+bool chartInS = not ((chartDow == 6 and chartHr >= 16) or chartDow == 7 or (chartDow == 1 and chartHr < 17))
 
-var bool chartPrevS     = true
-var int  cmeCloseBarIdx = na
-
-if not chartInS and chartPrevS and bar_index > 0
-    cmeCloseBarIdx := bar_index - 1
-
+var bool chartPrevS = true
 bool fridayCloseFired = not chartInS and chartPrevS and chartDow == 6
-
 chartPrevS := chartInS
 
 // ─────────────────────────────────────────────────────────────
-// 1H FUNCTION: CME GAP DETECTION + FILL TRACKING
-// ─────────────────────────────────────────────────────────────
-
-f_cmeGap(float minPct) =>
-    int  dow  = dayofweek(time, "America/Chicago")
-    int  hr   = hour(time,      "America/Chicago")
-    bool inS  = not ((dow == 6 and hr >= 16) or dow == 7 or (dow == 1 and hr < 17))
-
-    var bool  prevS    = true
-    var float closeRef = na
-    var int   closeT   = na
-    var float gapLvl   = na
-    var int   gapTyp   = 0
-    var int   gapAnc   = na
-    var bool  gapFlld  = false
-
-    if not inS and prevS
-        closeRef := close[1]
-        closeT   := time[1]
-        gapLvl   := na
-        gapTyp   := 0
-        gapAnc   := na
-        gapFlld  := false
-
-    if inS and not prevS and not na(closeRef)
-        if dayofweek(closeT, "America/Chicago") == 6
-            float m = math.abs(open - closeRef) / closeRef * 100
-            if m >= minPct
-                gapLvl := closeRef
-                gapTyp := open > closeRef ? 1 : -1
-                gapAnc := closeT
-                gapFlld := (gapTyp == 1 and low <= gapLvl) or (gapTyp == -1 and high >= gapLvl)
-
-    if not na(gapAnc) and not gapFlld
-        if (gapTyp == 1 and low <= gapLvl) or (gapTyp == -1 and high >= gapLvl)
-            gapFlld := true
-
-    prevS := inS
-    [gapLvl, gapTyp, gapAnc, gapFlld]
-
-// ─────────────────────────────────────────────────────────────
-// 1H FUNCTION: WEEKEND EXTREMES with LIVE EMISSION
+// 1H FUNCTION: WEEKEND EXTREMES (qualification)
+//
+// Returns the weekend high/low that exceeds all 4 prior weekday extremes,
+// or na if the weekend failed to take out the prior week's range.
+// Run on the VALIDATION venue.
 // ─────────────────────────────────────────────────────────────
 
 f_weekendExtremes() =>
@@ -262,23 +230,23 @@ f_weekendExtremes() =>
         cH := na
         cL := na
         if cmeC
-            wH := high
+            wH  := high
             wHT := time
-            wL := low
+            wL  := low
             wLT := time
 
     if isWk and inW and cmeC
         if na(wH)
-            wH := high
+            wH  := high
             wHT := time
-            wL := low
+            wL  := low
             wLT := time
         else
             if high > wH
-                wH := high
+                wH  := high
                 wHT := time
             if low < wL
-                wL := low
+                wL  := low
                 wLT := time
 
         bool h4 = not (na(d1H) or na(d2H) or na(d3H) or na(d4H))
@@ -305,12 +273,58 @@ f_weekendExtremes() =>
     [rHP, rHT, rLP, rLT, isWk]
 
 // ─────────────────────────────────────────────────────────────
-// 1H FUNCTION: WEEKLY OPEN DETECTION
+// 1H FUNCTION: RAW WEEKEND HIGH/LOW (drawing)
 //
-// Fires on the first 1H bar each week where postWklyOpen becomes true.
-// postWklyOpen = (Sun >= 19:00 CT) OR Mon–Sat. Resets to false at next Sun 00:00 CT.
-// On the transition, the bar's `open` is the weekly open price.
-// Values persist via var until the next transition (next Sunday 19:00 CT).
+// The chart symbol's own weekend extremes over the same cmeC window, with
+// no qualification test. This is what the line is drawn at, so it sits on
+// the wick you can actually see instead of floating off by CME basis.
+// Values persist after the weekend so promotion and catch-up can read them.
+// ─────────────────────────────────────────────────────────────
+
+f_weekendRawHL() =>
+    int  dow  = dayofweek(time, "America/Chicago")
+    int  hr   = hour(time,      "America/Chicago")
+    bool cmeC = (dow == 6 and hr >= 16) or dow == 7 or (dow == 1 and hr < 17)
+    bool isWk = dayofweek(time, "UTC") == 7 or dayofweek(time, "UTC") == 1
+
+    var bool  inW = false
+    var float wH  = na
+    var int   wHT = na
+    var float wL  = na
+    var int   wLT = na
+
+    if isWk and not inW
+        inW := true
+        if cmeC
+            wH  := high
+            wHT := time
+            wL  := low
+            wLT := time
+
+    if isWk and inW and cmeC
+        if na(wH)
+            wH  := high
+            wHT := time
+            wL  := low
+            wLT := time
+        else
+            if high > wH
+                wH  := high
+                wHT := time
+            if low < wL
+                wL  := low
+                wLT := time
+
+    if not isWk and inW
+        inW := false
+
+    [wH, wHT, wL, wLT]
+
+// ─────────────────────────────────────────────────────────────
+// 1H FUNCTION: WEEKLY OPEN
+//
+// Fires on the first 1H bar each week where postWklyOpen flips true
+// (Sun >= 19:00 CT). That bar's open is the weekly open price.
 // ─────────────────────────────────────────────────────────────
 
 f_weeklyOpen() =>
@@ -333,20 +347,17 @@ f_weeklyOpen() =>
     [wkOpen, wkOpenT, wkOpenAnc]
 
 // ─────────────────────────────────────────────────────────────
-// 1H FUNCTION: PERIOD REFERENCE LEVELS
+// 1H FUNCTION: PERIOD OPENS
 //
-// Detects daily, weekly close, monthly, quarterly, and yearly
-// boundaries at 1H resolution and captures open/close prices.
-// Daily/monthly/quarterly/yearly use UTC boundaries.
-// Weekly close uses the same Sun 19:00 CT boundary as weekly open.
-// Returns 14 values: [O, C, anchorTime] per period + weekly close.
+// Daily / monthly / quarterly / yearly boundaries on UTC, each returning
+// the boundary open price and its timestamp.
 // ─────────────────────────────────────────────────────────────
 
 f_periodLevels() =>
-    int mo  = month(time)
-    int yr  = year(time)
+    int mo = month(time)
+    int yr = year(time)
 
-    // ── Daily (UTC day boundary) ──
+    // ── Daily ──
     bool newDay = ta.change(time("D")) != 0
     var float pDO = na, var int pDA = na
     if newDay
@@ -356,7 +367,7 @@ f_periodLevels() =>
         pDO := open
         pDA := time
 
-    // ── Monthly (UTC month boundary) ──
+    // ── Monthly ──
     var int prevMo = -1
     bool newMonth = prevMo != -1 and mo != prevMo
     var float pMO = na, var int pMA = na
@@ -368,7 +379,7 @@ f_periodLevels() =>
         pMA := time
     prevMo := mo
 
-    // ── Quarterly (Jan/Apr/Jul/Oct 1st, UTC) ──
+    // ── Quarterly ──
     int qtr = int(math.ceil(mo / 3.0))
     var int prevQtr = -1
     bool newQtr = prevQtr != -1 and qtr != prevQtr
@@ -381,7 +392,7 @@ f_periodLevels() =>
         pQA := time
     prevQtr := qtr
 
-    // ── Yearly (Jan 1st, UTC) ──
+    // ── Yearly ──
     var int prevYr = -1
     bool newYear = prevYr != -1 and yr != prevYr
     var float pYO = na, var int pYA = na
@@ -396,14 +407,25 @@ f_periodLevels() =>
     [pDO, pDA, pMO, pMA, pQO, pQA, pYO, pYA]
 
 // ─────────────────────────────────────────────────────────────
-// REQUEST AT 1H
+// SECURITY REQUESTS
 // ─────────────────────────────────────────────────────────────
 
-[h1GapLvl, h1GapTyp, h1GapAnc, h1GapFlld] = request.security(
-    syminfo.tickerid, "60", f_cmeGap(minGapPct), gaps=barmerge.gaps_off)
+string extTicker = extSource == "CME" ? cmeSymbol : syminfo.tickerid
+bool   extIsAlt  = extTicker != syminfo.tickerid
+string srcTag    = (showSrcTag and extIsAlt) ? " (CME)" : ""
+string srcName   = extIsAlt ? "CME" : syminfo.ticker
 
+// Qualification + sweep authority: the validation venue.
 [h1HighP, h1HighT, h1LowP, h1LowT, h1IsWk] = request.security(
-    syminfo.tickerid, "60", f_weekendExtremes(), gaps=barmerge.gaps_off)
+    extTicker, "60", f_weekendExtremes(), gaps=barmerge.gaps_off)
+
+// Sweep comparison prices, in the validation venue's own scale.
+[srcHigh, srcLow] = request.security(
+    extTicker, timeframe.period, [high, low], gaps=barmerge.gaps_off)
+
+// Drawing prices + wick times: the chart symbol's own weekend extremes.
+[drawHighP, drawHighT, drawLowP, drawLowT] = request.security(
+    syminfo.tickerid, "60", f_weekendRawHL(), gaps=barmerge.gaps_off)
 
 [h1WkOpenP, h1WkOpenT, h1WkOpenAnc] = request.security(
     syminfo.tickerid, "60", f_weeklyOpen(), gaps=barmerge.gaps_off)
@@ -412,10 +434,14 @@ f_periodLevels() =>
     syminfo.tickerid, "60", f_periodLevels(), gaps=barmerge.gaps_off)
 
 // ─────────────────────────────────────────────────────────────
-// LEVEL STORAGE — Permanent (Weekend Extremes after promotion)
+// LEVEL STORAGE — Permanent Weekend Extremes
+//
+// lvlPrice  = validation-venue price (sweep comparisons)
+// lvlDrawP  = chart-symbol price (what gets drawn)
 // ─────────────────────────────────────────────────────────────
 
 var float[] lvlPrice  = array.new_float(0)
+var float[] lvlDrawP  = array.new_float(0)
 var int[]   lvlType   = array.new_int(0)
 var int[]   lvlBar    = array.new_int(0)
 var int[]   lvlBarIdx = array.new_int(0)
@@ -423,21 +449,11 @@ var line[]  lvlLines  = array.new_line(0)
 var label[] lvlLabels = array.new_label(0)
 
 // ─────────────────────────────────────────────────────────────
-// LEVEL STORAGE — CME Gap Fill
+// PREVIEW STATE — Live weekend extremes
 // ─────────────────────────────────────────────────────────────
 
-var float[] gapPrice  = array.new_float(0)
-var int[]   gapType   = array.new_int(0)
-var int[]   gapBar    = array.new_int(0)
-var int[]   gapBarIdx = array.new_int(0)
-var line[]  gapLines  = array.new_line(0)
-var label[] gapLabels = array.new_label(0)
-
-// ─────────────────────────────────────────────────────────────
-// PREVIEW STATE — Live weekend extremes (during weekend only)
-// ─────────────────────────────────────────────────────────────
-
-var float previewHighP      = na
+var float previewHighP      = na   // validation venue — sweep tests
+var float previewHighDrawP  = na   // chart symbol — drawing
 var int   previewHighT      = na
 var int   previewHighBarIdx = na
 var bool  previewHighSwept  = false
@@ -445,6 +461,7 @@ var line  previewHighLine   = na
 var label previewHighLabel  = na
 
 var float previewLowP       = na
+var float previewLowDrawP   = na
 var int   previewLowT       = na
 var int   previewLowBarIdx  = na
 var bool  previewLowSwept   = false
@@ -452,7 +469,7 @@ var line  previewLowLine    = na
 var label previewLowLabel   = na
 
 // ─────────────────────────────────────────────────────────────
-// LEVEL STATE — Weekly Open (single active level at a time)
+// LEVEL STATE — Weekly Open
 // ─────────────────────────────────────────────────────────────
 
 var float wkOpenP      = na
@@ -462,13 +479,13 @@ var line  wkOpenLine   = na
 var label wkOpenLabel  = na
 
 // ─────────────────────────────────────────────────────────────
-// LEVEL STATE — Period Reference Levels
+// LEVEL STATE — Period Opens
 // ─────────────────────────────────────────────────────────────
 
-var float dOpenP = na,  var int dOpenBI = na,  var line dOpenLn = na,  var label dOpenLb = na
-var float mOpenP = na,  var int mOpenBI = na,  var line mOpenLn = na,  var label mOpenLb = na
-var float qOpenP = na,  var int qOpenBI = na,  var line qOpenLn = na,  var label qOpenLb = na
-var float yOpenP = na,  var int yOpenBI = na,  var line yOpenLn = na,  var label yOpenLb = na
+var float dOpenP = na, var int dOpenBI = na, var line dOpenLn = na, var label dOpenLb = na
+var float mOpenP = na, var int mOpenBI = na, var line mOpenLn = na, var label mOpenLb = na
+var float qOpenP = na, var int qOpenBI = na, var line qOpenLn = na, var label qOpenLb = na
+var float yOpenP = na, var int yOpenBI = na, var line yOpenLn = na, var label yOpenLb = na
 
 // ─────────────────────────────────────────────────────────────
 // WEEKEND TRANSITION DETECTION
@@ -483,34 +500,10 @@ if weekendStarted
     previewHighSwept := false
     previewLowSwept  := false
 
-// Track the time of the last extreme that's been promoted to permanent
-// storage (or swept during preview). Used by the catch-up emission
-// path below to avoid double-emitting levels the preview path already
-// handled.
+// Times of extremes already promoted or swept, so the catch-up path
+// below doesn't re-emit what the preview path already handled.
 var int lastEmittedHighT = -1
 var int lastEmittedLowT  = -1
-
-// ─────────────────────────────────────────────────────────────
-// CME GAP EMISSION (anchored to last in-session bar)
-//
-// As of May 28 2026, CME trades BTC 24/7 — no weekend close means
-// no gap. Gate emission on time < cutoff so no new gap levels are
-// created, while existing ones continue to draw, fill, and clean up.
-// ─────────────────────────────────────────────────────────────
-
-int cme24x7Start = timestamp("UTC", 2026, 5, 28, 0, 0)
-
-var int lastGapAnc = -1
-bool newGapEmit = showGap and isBTC and not na(h1GapAnc) and h1GapAnc != lastGapAnc and time < cme24x7Start
-
-if newGapEmit
-    lastGapAnc := h1GapAnc
-    array.push(gapPrice,  h1GapLvl)
-    array.push(gapType,   h1GapTyp)
-    array.push(gapBar,    h1GapAnc)
-    array.push(gapBarIdx, na(cmeCloseBarIdx) ? bar_index : cmeCloseBarIdx)
-    array.push(gapLines,  line(na))
-    array.push(gapLabels, label(na))
 
 // ─────────────────────────────────────────────────────────────
 // WEEKLY OPEN EMISSION
@@ -523,53 +516,30 @@ if newWkOpenEmit
     lastWkOpenAnc := h1WkOpenAnc
     wkOpenP       := h1WkOpenP
     wkOpenT       := h1WkOpenT
-    // Compute anchor offset from emission bar back to the chart bar that
-    // contains h1WkOpenT. Works on all TFs regardless of how late the
-    // security delivers the new value: on 1D in CDT emission == anchor
-    // (offset 0), on 15m/30m/10m emission lags by various amounts and
-    // ceil((time - h1WkOpenT) / barDurMs) lands exactly on the bar
-    // whose span contains the weekly open moment.
-    int barDurMs = timeframe.in_seconds(timeframe.period) * 1000
-    float ratio  = barDurMs > 0 ? (time - h1WkOpenT) / float(barDurMs) : 0.0
-    int offset   = math.max(0, int(math.ceil(ratio)))
-    wkOpenBarIdx := math.max(0, bar_index - offset)
+    wkOpenBarIdx  := f_anchorBI(h1WkOpenT)
 
 // ─────────────────────────────────────────────────────────────
-// PERIOD LEVEL EMISSIONS
-//
-// Each period boundary (daily/weekly close/monthly/quarterly/yearly)
-// gets an anchor bar_index computed from the time offset formula,
-// same as weekly open. Open and close for each period share an anchor.
+// PERIOD OPEN EMISSIONS
 // ─────────────────────────────────────────────────────────────
 
-// Helper: compute anchor bar_index from a 1H anchor time
-f_anchorBI(int ancT) =>
-    int bms = timeframe.in_seconds(timeframe.period) * 1000
-    float r = bms > 0 ? (time - ancT) / float(bms) : 0.0
-    math.max(0, bar_index - math.max(0, int(math.ceil(r))))
-
-// ── Daily ──
 var int lastDA = -1
 if not na(h1DA) and h1DA != lastDA
     lastDA  := h1DA
     dOpenP  := h1DO
     dOpenBI := f_anchorBI(h1DA)
 
-// ── Monthly ──
 var int lastMA = -1
 if not na(h1MA) and h1MA != lastMA
     lastMA  := h1MA
     mOpenP  := h1MO
     mOpenBI := f_anchorBI(h1MA)
 
-// ── Quarterly ──
 var int lastQA = -1
 if not na(h1QA) and h1QA != lastQA
     lastQA  := h1QA
     qOpenP  := h1QO
     qOpenBI := f_anchorBI(h1QA)
 
-// ── Yearly ──
 var int lastYA = -1
 if not na(h1YA) and h1YA != lastYA
     lastYA  := h1YA
@@ -578,6 +548,10 @@ if not na(h1YA) and h1YA != lastYA
 
 // ─────────────────────────────────────────────────────────────
 // PREVIEW UPDATE (during weekend)
+//
+// Qualification and sweep tests run on the validation venue. The drawn
+// price and anchor come from the chart symbol's own wick, falling back to
+// the validation price only if the chart feed has no value.
 // ─────────────────────────────────────────────────────────────
 
 var bool sweepHighFired = false
@@ -588,39 +562,43 @@ sweepLowFired  := false
 if isBTC and h1IsWk
     if not previewHighSwept
         if not na(h1HighP) and not na(h1HighT)
-            if na(previewHighBarIdx) or h1HighT != previewHighT
-                previewHighBarIdx := bar_index
-            previewHighP := h1HighP
-            previewHighT := h1HighT
+            previewHighP     := h1HighP
+            previewHighT     := h1HighT
+            previewHighDrawP := na(drawHighP) ? h1HighP : drawHighP
+            previewHighBarIdx := f_anchorBI(na(drawHighT) ? h1HighT : drawHighT)
         else
             previewHighP      := na
+            previewHighDrawP  := na
             previewHighT      := na
             previewHighBarIdx := na
 
-    if not previewHighSwept and not na(previewHighP) and high > previewHighP
+    if not previewHighSwept and not na(previewHighP) and not na(srcHigh) and srcHigh > previewHighP
         previewHighSwept  := true
         sweepHighFired    := true
         lastEmittedHighT  := previewHighT
         previewHighP      := na
+        previewHighDrawP  := na
         previewHighT      := na
         previewHighBarIdx := na
 
     if not previewLowSwept
         if not na(h1LowP) and not na(h1LowT)
-            if na(previewLowBarIdx) or h1LowT != previewLowT
-                previewLowBarIdx := bar_index
-            previewLowP := h1LowP
-            previewLowT := h1LowT
+            previewLowP     := h1LowP
+            previewLowT     := h1LowT
+            previewLowDrawP := na(drawLowP) ? h1LowP : drawLowP
+            previewLowBarIdx := f_anchorBI(na(drawLowT) ? h1LowT : drawLowT)
         else
             previewLowP      := na
+            previewLowDrawP  := na
             previewLowT      := na
             previewLowBarIdx := na
 
-    if not previewLowSwept and not na(previewLowP) and low < previewLowP
+    if not previewLowSwept and not na(previewLowP) and not na(srcLow) and srcLow < previewLowP
         previewLowSwept  := true
         sweepLowFired    := true
         lastEmittedLowT  := previewLowT
         previewLowP      := na
+        previewLowDrawP  := na
         previewLowT      := na
         previewLowBarIdx := na
 
@@ -631,6 +609,7 @@ if isBTC and h1IsWk
 if weekendEnded and isBTC
     if not previewHighSwept and not na(previewHighP) and not na(previewHighT) and not na(previewHighBarIdx)
         array.push(lvlPrice,  previewHighP)
+        array.push(lvlDrawP,  na(previewHighDrawP) ? previewHighP : previewHighDrawP)
         array.push(lvlType,   1)
         array.push(lvlBar,    previewHighT)
         array.push(lvlBarIdx, previewHighBarIdx)
@@ -640,6 +619,7 @@ if weekendEnded and isBTC
 
     if not previewLowSwept and not na(previewLowP) and not na(previewLowT) and not na(previewLowBarIdx)
         array.push(lvlPrice,  previewLowP)
+        array.push(lvlDrawP,  na(previewLowDrawP) ? previewLowP : previewLowDrawP)
         array.push(lvlType,   -1)
         array.push(lvlBar,    previewLowT)
         array.push(lvlBarIdx, previewLowBarIdx)
@@ -656,59 +636,47 @@ if weekendEnded and isBTC
     previewLowLine    := na
     previewLowLabel   := na
     previewHighP      := na
+    previewHighDrawP  := na
     previewHighT      := na
     previewHighBarIdx := na
     previewLowP       := na
+    previewLowDrawP   := na
     previewLowT       := na
     previewLowBarIdx  := na
 
 // ─────────────────────────────────────────────────────────────
-// WEEKEND EXTREME CATCH-UP EMISSION
+// CATCH-UP EMISSION
 //
-// Chart timeframes with limited history (1m, 5m, 15m, 30m) often don't
-// include the weekend bars at all. The preview→promotion path above
-// requires h1IsWk to transition true→false on a visible chart bar,
-// which never happens if h1IsWk is already false at chart start —
-// so no level gets added.
-//
-// This catch-up path emits a permanent level whenever the 1H security
-// reports an extreme that hasn't been emitted yet (via the preview
-// path or a previous catch-up). Skipped during weekends to avoid
-// colliding with the live preview. The anchor is computed from
-// (time - h1HighT) / barDurMs, same formula as the weekly open, so
-// the level lands on the chart bar whose span contains the wick that
-// set the extreme.
+// LTF charts (1m–30m) often hold no weekend bars at all, so h1IsWk never
+// transitions true→false on a visible bar and the promotion path never
+// runs. This emits any qualified extreme the preview path hasn't handled.
 // ─────────────────────────────────────────────────────────────
 
 if isBTC and not h1IsWk
-    int barDurMsExt = timeframe.in_seconds(timeframe.period) * 1000
-
     if not na(h1HighT) and h1HighT != lastEmittedHighT
         lastEmittedHighT := h1HighT
-        float ratioH    = barDurMsExt > 0 ? (time - h1HighT) / float(barDurMsExt) : 0.0
-        int   offsetH   = math.max(0, int(math.ceil(ratioH)))
-        int   anchorH   = math.max(0, bar_index - offsetH)
         array.push(lvlPrice,  h1HighP)
+        array.push(lvlDrawP,  na(drawHighP) ? h1HighP : drawHighP)
         array.push(lvlType,   1)
         array.push(lvlBar,    h1HighT)
-        array.push(lvlBarIdx, anchorH)
+        array.push(lvlBarIdx, f_anchorBI(na(drawHighT) ? h1HighT : drawHighT))
         array.push(lvlLines,  line(na))
         array.push(lvlLabels, label(na))
 
     if not na(h1LowT) and h1LowT != lastEmittedLowT
         lastEmittedLowT := h1LowT
-        float ratioL    = barDurMsExt > 0 ? (time - h1LowT) / float(barDurMsExt) : 0.0
-        int   offsetL   = math.max(0, int(math.ceil(ratioL)))
-        int   anchorL   = math.max(0, bar_index - offsetL)
         array.push(lvlPrice,  h1LowP)
+        array.push(lvlDrawP,  na(drawLowP) ? h1LowP : drawLowP)
         array.push(lvlType,   -1)
         array.push(lvlBar,    h1LowT)
-        array.push(lvlBarIdx, anchorL)
+        array.push(lvlBarIdx, f_anchorBI(na(drawLowT) ? h1LowT : drawLowT))
         array.push(lvlLines,  line(na))
         array.push(lvlLabels, label(na))
 
 // ─────────────────────────────────────────────────────────────
 // SWEEP / STALE — Permanent Weekend Extremes
+//
+// Sweep is judged on the validation venue's price, never the chart's.
 // ─────────────────────────────────────────────────────────────
 
 if array.size(lvlPrice) > 0
@@ -716,7 +684,7 @@ if array.size(lvlPrice) > 0
         float p       = array.get(lvlPrice, j)
         int   t       = array.get(lvlType,  j)
         int   lvlTime = array.get(lvlBar,   j)
-        bool  swept   = (t ==  1 and high > p) or (t == -1 and low < p)
+        bool  swept   = (t == 1 and not na(srcHigh) and srcHigh > p) or (t == -1 and not na(srcLow) and srcLow < p)
         bool  stale   = (time - lvlTime) > extStaleMs
 
         if swept
@@ -729,6 +697,7 @@ if array.size(lvlPrice) > 0
             line.delete( array.get(lvlLines,  j))
             label.delete(array.get(lvlLabels, j))
             array.remove(lvlPrice,  j)
+            array.remove(lvlDrawP,  j)
             array.remove(lvlType,   j)
             array.remove(lvlBar,    j)
             array.remove(lvlBarIdx, j)
@@ -739,6 +708,7 @@ while array.size(lvlPrice) > maxExtLevels
     line.delete( array.get(lvlLines,  0))
     label.delete(array.get(lvlLabels, 0))
     array.shift(lvlPrice)
+    array.shift(lvlDrawP)
     array.shift(lvlType)
     array.shift(lvlBar)
     array.shift(lvlBarIdx)
@@ -746,49 +716,7 @@ while array.size(lvlPrice) > maxExtLevels
     array.shift(lvlLabels)
 
 // ─────────────────────────────────────────────────────────────
-// FILL — CME Gap Fill
-// ─────────────────────────────────────────────────────────────
-
-var bool gapFillFired = false
-gapFillFired := false
-
-if array.size(gapPrice) > 0
-    for j = array.size(gapPrice) - 1 to 0
-        float p   = array.get(gapPrice, j)
-        int   t   = array.get(gapType,  j)
-        int   anc = array.get(gapBar,   j)
-
-        bool isCurrent = not na(h1GapAnc) and anc == h1GapAnc
-        bool filled = isCurrent
-             ? h1GapFlld
-             : ((t == 1 and low <= p) or (t == -1 and high >= p))
-
-        if filled
-            gapFillFired := true
-            line.delete( array.get(gapLines,  j))
-            label.delete(array.get(gapLabels, j))
-            array.remove(gapPrice,  j)
-            array.remove(gapType,   j)
-            array.remove(gapBar,    j)
-            array.remove(gapBarIdx, j)
-            array.remove(gapLines,  j)
-            array.remove(gapLabels, j)
-
-while array.size(gapPrice) > maxGapLevels
-    line.delete( array.get(gapLines,  0))
-    label.delete(array.get(gapLabels, 0))
-    array.shift(gapPrice)
-    array.shift(gapType)
-    array.shift(gapBar)
-    array.shift(gapBarIdx)
-    array.shift(gapLines)
-    array.shift(gapLabels)
-
-// ─────────────────────────────────────────────────────────────
 // REMOVE — Weekly Open on Friday CME close
-//
-// fridayCloseFired distinguishes Friday's CME close from daily maintenance
-// breaks on Mon–Thu (which also flip chartInS but have chartDow != 6).
 // ─────────────────────────────────────────────────────────────
 
 if fridayCloseFired and not na(wkOpenP)
@@ -801,20 +729,16 @@ if fridayCloseFired and not na(wkOpenP)
 // ─────────────────────────────────────────────────────────────
 
 if alertOnSweep and sweepHighFired
-    alert("Weekend High swept | " + syminfo.ticker + " | " + str.tostring(close, "#.##"), alert.freq_once_per_bar)
+    alert("Weekend High swept on " + srcName + " | chart " + syminfo.ticker + " | " + str.tostring(close, "#.##"), alert.freq_once_per_bar)
 
 if alertOnSweep and sweepLowFired
-    alert("Weekend Low swept | " + syminfo.ticker + " | " + str.tostring(close, "#.##"), alert.freq_once_per_bar)
-
-if alertOnGapFill and gapFillFired
-    alert("CME Gap filled | " + syminfo.ticker + " | " + str.tostring(close, "#.##"), alert.freq_once_per_bar)
+    alert("Weekend Low swept on " + srcName + " | chart " + syminfo.ticker + " | " + str.tostring(close, "#.##"), alert.freq_once_per_bar)
 
 alertcondition(sweepHighFired, "Weekend High Swept", "Weekend High swept")
 alertcondition(sweepLowFired,  "Weekend Low Swept",  "Weekend Low swept")
-alertcondition(gapFillFired,   "CME Gap Filled",     "CME Gap filled")
 
 // ─────────────────────────────────────────────────────────────
-// DRAW — Preview (live during weekend)
+// DRAW — Weekend Extreme Preview (live during weekend)
 // ─────────────────────────────────────────────────────────────
 
 line.delete(previewHighLine)
@@ -826,33 +750,33 @@ previewHighLabel := na
 previewLowLine   := na
 previewLowLabel  := na
 
-if h1IsWk and isBTC
-    if not na(previewHighP) and not na(previewHighBarIdx)
+if showExt and h1IsWk and isBTC
+    if not na(previewHighDrawP) and not na(previewHighBarIdx)
         int prevHX1 = f_safeBI(previewHighBarIdx)
         int prevHX2 = math.max(bar_index, prevHX1 + 1)
         previewHighLine := line.new(
-             prevHX1, previewHighP, prevHX2, previewHighP,
+             prevHX1, previewHighDrawP, prevHX2, previewHighDrawP,
              color=highColor, width=lineWidth,
              style=getLineStyle(lineStyle),
              extend=extend.right, xloc=xloc.bar_index)
         if showLabels
             previewHighLabel := label.new(
-                 bar_index, previewHighP, "Weekend High",
+                 bar_index, previewHighDrawP, "Weekend High" + srcTag,
                  color=color.new(color.black, 100), textcolor=highColor,
                  style=label.style_label_lower_left,
                  size=size.small, xloc=xloc.bar_index)
 
-    if not na(previewLowP) and not na(previewLowBarIdx)
+    if not na(previewLowDrawP) and not na(previewLowBarIdx)
         int prevLX1 = f_safeBI(previewLowBarIdx)
         int prevLX2 = math.max(bar_index, prevLX1 + 1)
         previewLowLine := line.new(
-             prevLX1, previewLowP, prevLX2, previewLowP,
+             prevLX1, previewLowDrawP, prevLX2, previewLowDrawP,
              color=lowColor, width=lineWidth,
              style=getLineStyle(lineStyle),
              extend=extend.right, xloc=xloc.bar_index)
         if showLabels
             previewLowLabel := label.new(
-                 bar_index, previewLowP, "Weekend Low",
+                 bar_index, previewLowDrawP, "Weekend Low" + srcTag,
                  color=color.new(color.black, 100), textcolor=lowColor,
                  style=label.style_label_upper_left,
                  size=size.small, xloc=xloc.bar_index)
@@ -863,7 +787,7 @@ if h1IsWk and isBTC
 
 if array.size(lvlPrice) > 0
     for j = 0 to array.size(lvlPrice) - 1
-        float p      = array.get(lvlPrice,  j)
+        float dp     = array.get(lvlDrawP,  j)
         int   t      = array.get(lvlType,   j)
         int   startI = array.get(lvlBarIdx, j)
         color col    = t == 1 ? highColor : lowColor
@@ -871,56 +795,30 @@ if array.size(lvlPrice) > 0
         line.delete( array.get(lvlLines,  j))
         label.delete(array.get(lvlLabels, j))
 
-        int extX1 = f_safeBI(startI)
-        int extX2 = math.max(bar_index, extX1 + 1)
-        array.set(lvlLines, j, line.new(
-             extX1, p, extX2, p,
-             color=col, width=lineWidth,
-             style=getLineStyle(lineStyle),
-             extend=extend.right, xloc=xloc.bar_index))
+        if showExt and not na(dp)
+            int extX1 = f_safeBI(startI)
+            int extX2 = math.max(bar_index, extX1 + 1)
+            array.set(lvlLines, j, line.new(
+                 extX1, dp, extX2, dp,
+                 color=col, width=lineWidth,
+                 style=getLineStyle(lineStyle),
+                 extend=extend.right, xloc=xloc.bar_index))
 
-        if showLabels
-            string lbl = t == 1 ? "Weekend High" : "Weekend Low"
-            array.set(lvlLabels, j, label.new(
-                 bar_index, p, lbl,
-                 color=color.new(color.black, 100), textcolor=col,
-                 style=t == 1 ? label.style_label_lower_left : label.style_label_upper_left,
-                 size=size.small, xloc=xloc.bar_index))
-
-// ─────────────────────────────────────────────────────────────
-// DRAW — CME Gap Fill
-// ─────────────────────────────────────────────────────────────
-
-if showGap and array.size(gapPrice) > 0
-    for j = 0 to array.size(gapPrice) - 1
-        float p      = array.get(gapPrice,  j)
-        int   t      = array.get(gapType,   j)
-        int   startI = array.get(gapBarIdx, j)
-
-        line.delete( array.get(gapLines,  j))
-        label.delete(array.get(gapLabels, j))
-
-        array.set(gapLines, j, line.new(
-             f_safeBI(startI), p, bar_index, p,
-             color=gapColor, width=gapWidth,
-             style=getLineStyle(gapStyle),
-             extend=extend.right, xloc=xloc.bar_index))
-
-        if showLabels
-            array.set(gapLabels, j, label.new(
-                 bar_index, p, "CME Gap Fill",
-                 color=color.new(color.black, 100), textcolor=gapColor,
-                 style=t == 1 ? label.style_label_upper_left : label.style_label_lower_left,
-                 size=size.small, xloc=xloc.bar_index))
+            if showLabels
+                string lbl = (t == 1 ? "Weekend High" : "Weekend Low") + srcTag
+                array.set(lvlLabels, j, label.new(
+                     bar_index, dp, lbl,
+                     color=color.new(color.black, 100), textcolor=col,
+                     style=t == 1 ? label.style_label_lower_left : label.style_label_upper_left,
+                     size=size.small, xloc=xloc.bar_index))
 
 // ─────────────────────────────────────────────────────────────
-// MERGE — Open Levels Sharing a Price
+// MERGE — Coincident Period Opens
 //
-// At period boundaries that coincide (new year → Y/Q/M/W/D opens
-// share the same open price), only the most significant level is
-// drawn. Priority high→low: Y > Q > M > W > D. A lower-priority
-// level is suppressed when a higher-priority level is enabled, has
-// a value, and shares the same price (rounded to mintick).
+// At a shared boundary (new year → Y/Q/M/W/D opens coincide) only the
+// most significant level draws. Priority high→low: Y > Q > M > W > D.
+// A level is suppressed when a higher-priority enabled level shares its
+// price (to mintick) or its anchor bar.
 // ─────────────────────────────────────────────────────────────
 
 f_samePrice(float a, float b) =>
@@ -938,7 +836,6 @@ bool mOn = showMonthOpen and not na(mOpenP)
 bool wOn = showWkOpen    and not na(wkOpenP)
 bool dOn = showDailyOpen and not na(dOpenP)
 
-// Suppress if any higher-priority enabled level shares this price or anchor.
 bool qHid = qOn and yOn and f_merge(qOpenP, yOpenP, qOpenBI, yOpenBI)
 bool mHid = mOn and ((yOn and f_merge(mOpenP, yOpenP, mOpenBI, yOpenBI)) or (qOn and f_merge(mOpenP, qOpenP, mOpenBI, qOpenBI)))
 bool wHid = wOn and ((yOn and f_merge(wkOpenP, yOpenP, wkOpenBarIdx, yOpenBI)) or (qOn and f_merge(wkOpenP, qOpenP, wkOpenBarIdx, qOpenBI)) or (mOn and f_merge(wkOpenP, mOpenP, wkOpenBarIdx, mOpenBI)))
@@ -950,13 +847,7 @@ bool drawM = showMonthOpen and not mHid
 bool drawW = showWkOpen    and not wHid
 bool drawD = showDailyOpen and not dHid
 
-// ─────────────────────────────────────────────────────────────
-// MERGED LABEL TEXT
-//
-// Each suppressed level appends its tag to the highest-priority
-// visible level it merges with, producing e.g. "qO/mO".
-// ─────────────────────────────────────────────────────────────
-
+// Absorbed tags append to the surviving level's label.
 string yTxt = "yO"
 string qTxt = "qO"
 string mTxt = "mO"
@@ -991,7 +882,7 @@ if dOn and dHid
         wTxt += "/dO"
 
 // ─────────────────────────────────────────────────────────────
-// DRAW — Weekly Open (merge-gated)
+// DRAW — Weekly Open
 // ─────────────────────────────────────────────────────────────
 
 line.delete(wkOpenLine)
@@ -1015,20 +906,20 @@ if drawW and not na(wkOpenP) and not na(wkOpenBarIdx)
              size=size.small, xloc=xloc.bar_index)
 
 // ─────────────────────────────────────────────────────────────
-// DRAW — Period Reference Levels (merge-gated, short-form labels)
+// DRAW — Daily / Monthly / Quarterly / Yearly Opens
 // ─────────────────────────────────────────────────────────────
 
-[n1, n2]   = f_drawPeriodLevel(dOpenLn, dOpenLb, drawD, dOpenP, dOpenBI, dailyColor, dailyWidth, getLineStyle(dOpenStyle), dTxt)
-dOpenLn   := n1
-dOpenLb   := n2
-[n3, n4]   = f_drawPeriodLevel(mOpenLn, mOpenLb, drawM, mOpenP, mOpenBI, monthColor, monthWidth, getLineStyle(mOpenStyle), mTxt)
-mOpenLn   := n3
-mOpenLb   := n4
-[n5, n6]   = f_drawPeriodLevel(qOpenLn, qOpenLb, drawQ, qOpenP, qOpenBI, qtrColor, qyWidth, getLineStyle(qOpenStyle), qTxt)
-qOpenLn   := n5
-qOpenLb   := n6
-[n7, n8]   = f_drawPeriodLevel(yOpenLn, yOpenLb, drawY, yOpenP, yOpenBI, yearColor, qyWidth, getLineStyle(yOpenStyle), yTxt)
-yOpenLn   := n7
-yOpenLb   := n8
+[n1, n2] = f_drawPeriodLevel(dOpenLn, dOpenLb, drawD, dOpenP, dOpenBI, dailyColor, dailyWidth, getLineStyle(dOpenStyle), dTxt)
+dOpenLn := n1
+dOpenLb := n2
+[n3, n4] = f_drawPeriodLevel(mOpenLn, mOpenLb, drawM, mOpenP, mOpenBI, monthColor, monthWidth, getLineStyle(mOpenStyle), mTxt)
+mOpenLn := n3
+mOpenLb := n4
+[n5, n6] = f_drawPeriodLevel(qOpenLn, qOpenLb, drawQ, qOpenP, qOpenBI, qtrColor, qtrWidth, getLineStyle(qOpenStyle), qTxt)
+qOpenLn := n5
+qOpenLb := n6
+[n7, n8] = f_drawPeriodLevel(yOpenLn, yOpenLb, drawY, yOpenP, yOpenBI, yearColor, yearWidth, getLineStyle(yOpenStyle), yTxt)
+yOpenLn := n7
+yOpenLb := n8
 
 plot(na)
