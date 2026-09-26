@@ -21,7 +21,7 @@ combinedPrice = totalVol > 0 ? totalPV / totalVol : hlc3
 
 // ———————————————————— Inputs {
 
-autoAnchor = timeframe.in_seconds() < 3600 ? "Week" : timeframe.in_seconds() <= 14400 ? "Month" : timeframe.in_seconds() <= 43200 ? "Quarter" : "Year"
+autoAnchor = timeframe.in_seconds() <= 900 ? "Session" : timeframe.in_seconds() < 3600 ? "Week" : timeframe.in_seconds() <= 14400 ? "Month" : timeframe.in_seconds() <= 43200 ? "Quarter" : timeframe.in_seconds() >= 1209600 ? "Decade" : "Year"
 
 var anchor = input.string(defval = "Auto", title="Anchor Period",
  options=["Auto", "Session", "Week", "Month", "Quarter", "Year", "Decade", "Century", "Earnings", "Dividends", "Splits"], group="VWAP Settings", display = display.none)
@@ -31,7 +31,6 @@ actualAnchor = anchor == "Auto" ? autoAnchor : anchor
 BANDS_GROUP = "Bands Settings"
 showBand_1 = input.bool(true, "Band 1", group = BANDS_GROUP, display = display.none)
 showBand_2 = input.bool(false, "Band 2", group = BANDS_GROUP, display = display.none)
-showBand_3 = input.bool(false, "Band 3", group = BANDS_GROUP, display = display.none)
 bandLineColor = input.color(color.new(color.white, 100), "Line", inline = "bandcolor", group = BANDS_GROUP, display = display.none)
 bandFillColor = input.color(color.new(color.white, 85), "Fill", inline = "bandcolor", group = BANDS_GROUP, display = display.none)
 
@@ -39,7 +38,6 @@ PREV_GROUP = "Previous Period Settings"
 showPrevPeriod = input.bool(true, "Show Previous VWAP", group = PREV_GROUP, display = display.none)
 showPrevBand_1 = input.bool(true, "Band 1", group = PREV_GROUP, display = display.none)
 showPrevBand_2 = input.bool(false, "Band 2", group = PREV_GROUP, display = display.none)
-showPrevBand_3 = input.bool(false, "Band 3", group = PREV_GROUP, display = display.none)
 prevBandLineColor = input.color(color.new(color.white, 100), "Line", inline = "pbandcolor", group = PREV_GROUP, display = display.none)
 prevBandFillColor = input.color(color.new(color.white, 85), "Fill", inline = "pbandcolor", group = PREV_GROUP, display = display.none)
 
@@ -123,15 +121,12 @@ float upperBand1 = _vwap + stdevAbs
 float lowerBand1 = _vwap - stdevAbs
 float upperBand2 = _vwap + stdevAbs * 2
 float lowerBand2 = _vwap - stdevAbs * 2
-float upperBand3 = _vwap + stdevAbs * 3
-float lowerBand3 = _vwap - stdevAbs * 3
 
 // ———————————————————— Previous Period Storage {
 
 var float prevVwap = na
 var float prevUpper1 = na, var float prevLower1 = na
 var float prevUpper2 = na, var float prevLower2 = na
-var float prevUpper3 = na, var float prevLower3 = na
 
 // ———————————————————— Historical Period Storage {
 
@@ -140,8 +135,6 @@ var array<float> histUpper1Arr = array.new_float()
 var array<float> histLower1Arr = array.new_float()
 var array<float> histUpper2Arr = array.new_float()
 var array<float> histLower2Arr = array.new_float()
-var array<float> histUpper3Arr = array.new_float()
-var array<float> histLower3Arr = array.new_float()
 var array<int>   histBarArr    = array.new_int()
 
 var array<line>     histLines = array.new_line()
@@ -154,8 +147,6 @@ if isNewPeriod and not na(vwapValue[1])
         array.push(histLower1Arr, prevLower1)
         array.push(histUpper2Arr, prevUpper2)
         array.push(histLower2Arr, prevLower2)
-        array.push(histUpper3Arr, prevUpper3)
-        array.push(histLower3Arr, prevLower3)
         array.push(histBarArr,    bar_index)
 
         while array.size(histVwapArr) > histPeriods
@@ -164,8 +155,6 @@ if isNewPeriod and not na(vwapValue[1])
             array.shift(histLower1Arr)
             array.shift(histUpper2Arr)
             array.shift(histLower2Arr)
-            array.shift(histUpper3Arr)
-            array.shift(histLower3Arr)
             array.shift(histBarArr)
 
     prevVwap   := vwapValue[1]
@@ -173,8 +162,6 @@ if isNewPeriod and not na(vwapValue[1])
     prevLower1 := lowerBand1[1]
     prevUpper2 := upperBand2[1]
     prevLower2 := lowerBand2[1]
-    prevUpper3 := upperBand3[1]
-    prevLower3 := lowerBand3[1]
 
 // ———————————————————— Draw Historical Extensions {
 // When merge is active, the newest (mergePeriods - 1) history entries are
@@ -199,8 +186,6 @@ if barstate.islast and histPeriods > 0
             float hL1   = array.get(histLower1Arr, i)
             float hU2   = array.get(histUpper2Arr, i)
             float hL2   = array.get(histLower2Arr, i)
-            float hU3   = array.get(histUpper3Arr, i)
-            float hL3   = array.get(histLower3Arr, i)
             int   hBar  = array.get(histBarArr, i)
 
             line vwapLine = line.new(hBar, hVwap, bar_index, hVwap, color=color.new(color.white, 25), style=line.style_dotted, width=2)
@@ -227,20 +212,6 @@ if barstate.islast and histPeriods > 0
                 linefill f2l = linefill.new(l1Ref, l2Line, prevBandFillColor)
                 array.push(histFills, f2u)
                 array.push(histFills, f2l)
-
-            if showPrevBand_3 and not na(hU3) and not na(hL3) and not na(hU2) and not na(hL2)
-                line u3Line = line.new(hBar, hU3, bar_index, hU3, color=prevBandLineColor)
-                line l3Line = line.new(hBar, hL3, bar_index, hL3, color=prevBandLineColor)
-                line u2Ref = line.new(hBar, hU2, bar_index, hU2, color=prevBandLineColor)
-                line l2Ref = line.new(hBar, hL2, bar_index, hL2, color=prevBandLineColor)
-                array.push(histLines, u3Line)
-                array.push(histLines, l3Line)
-                array.push(histLines, u2Ref)
-                array.push(histLines, l2Ref)
-                linefill f3u = linefill.new(u3Line, u2Ref, prevBandFillColor)
-                linefill f3l = linefill.new(l2Ref, l3Line, prevBandFillColor)
-                array.push(histFills, f3u)
-                array.push(histFills, f3l)
 
 // ———————————————————— Draw Merged Period {
 // Volume-weighted recombination of the last N completed periods
@@ -290,7 +261,6 @@ if barstate.islast
 
             float mU1 = mVwap + mStdev,     mL1 = mVwap - mStdev
             float mU2 = mVwap + mStdev * 2, mL2 = mVwap - mStdev * 2
-            float mU3 = mVwap + mStdev * 3, mL3 = mVwap - mStdev * 3
 
             if showPrevBand_1
                 line u1 = line.new(mStart, mU1, bar_index, mU1, color=prevBandLineColor)
@@ -311,18 +281,6 @@ if barstate.islast
                 array.push(mergeFills, linefill.new(u2, u1r, prevBandFillColor))
                 array.push(mergeFills, linefill.new(l1r, l2, prevBandFillColor))
 
-            if showPrevBand_3
-                line u3 = line.new(mStart, mU3, bar_index, mU3, color=prevBandLineColor)
-                line l3 = line.new(mStart, mL3, bar_index, mL3, color=prevBandLineColor)
-                line u2r = line.new(mStart, mU2, bar_index, mU2, color=prevBandLineColor)
-                line l2r = line.new(mStart, mL2, bar_index, mL2, color=prevBandLineColor)
-                array.push(mergeLines, u3)
-                array.push(mergeLines, l3)
-                array.push(mergeLines, u2r)
-                array.push(mergeLines, l2r)
-                array.push(mergeFills, linefill.new(u3, u2r, prevBandFillColor))
-                array.push(mergeFills, linefill.new(l2r, l3, prevBandFillColor))
-
 // ———————————————————— Plots - Current Period {
 
 plot(vwapValue, title = "VWAP", color = color.new(color.white, 25), linewidth = 2)
@@ -335,11 +293,6 @@ p_upper2 = plot(showBand_2 ? upperBand2 : na, title="Upper Band 2", color = band
 p_lower2 = plot(showBand_2 ? lowerBand2 : na, title="Lower Band 2", color = bandLineColor)
 fill(p_upper2, p_upper1, title="Band 2 Upper Fill", color = showBand_2 ? bandFillColor : na)
 fill(p_lower1, p_lower2, title="Band 2 Lower Fill", color = showBand_2 ? bandFillColor : na)
-
-p_upper3 = plot(showBand_3 ? upperBand3 : na, title="Upper Band 3", color = bandLineColor)
-p_lower3 = plot(showBand_3 ? lowerBand3 : na, title="Lower Band 3", color = bandLineColor)
-fill(p_upper3, p_upper2, title="Band 3 Upper Fill", color = showBand_3 ? bandFillColor : na)
-fill(p_lower2, p_lower3, title="Band 3 Lower Fill", color = showBand_3 ? bandFillColor : na)
 
 // ———————————————————— Plots - Previous Period {
 // Suppressed while a merge is active (merge always covers the previous period).
@@ -356,8 +309,3 @@ pp_upper2 = plot(showPrevEff and showPrevBand_2 ? prevUpper2 : na, title = "Prev
 pp_lower2 = plot(showPrevEff and showPrevBand_2 ? prevLower2 : na, title = "Prev Lower Band 2", color = prevBandLineColor)
 fill(pp_upper2, pp_upper1, title = "Prev Band 2 Upper Fill", color = showPrevEff and showPrevBand_2 ? prevBandFillColor : na)
 fill(pp_lower1, pp_lower2, title = "Prev Band 2 Lower Fill", color = showPrevEff and showPrevBand_2 ? prevBandFillColor : na)
-
-pp_upper3 = plot(showPrevEff and showPrevBand_3 ? prevUpper3 : na, title = "Prev Upper Band 3", color = prevBandLineColor)
-pp_lower3 = plot(showPrevEff and showPrevBand_3 ? prevLower3 : na, title = "Prev Lower Band 3", color = prevBandLineColor)
-fill(pp_upper3, pp_upper2, title = "Prev Band 3 Upper Fill", color = showPrevEff and showPrevBand_3 ? prevBandFillColor : na)
-fill(pp_lower2, pp_lower3, title = "Prev Band 3 Lower Fill", color = showPrevEff and showPrevBand_3 ? prevBandFillColor : na)
